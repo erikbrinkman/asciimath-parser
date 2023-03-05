@@ -1,5 +1,9 @@
 Asciimath Parser
 ================
+[![crates.io](https://img.shields.io/crates/v/asciimath-parser)](https://crates.io/crates/asciimath-parser)
+[![docs](https://docs.rs/asciimath-parser/badge.svg)](https://docs.rs/asciimath-parser)
+[![license](https://img.shields.io/github/license/erikbrinkman/asciimath-parser)](LICENSE)
+[![tests](https://github.com/erikbrinkman/asciimath-parser/actions/workflows/rust.yml/badge.svg)](https://github.com/erikbrinkman/asciimath-parser/actions/workflows/rust.yml)
 
 A fast extensible memory-efficient asciimath parser
 
