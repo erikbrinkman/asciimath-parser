@@ -5,10 +5,10 @@
 //! - [`Frac`] - A high level fraction, often parsed with a `/`
 //! - [`ScriptFunc`] - A scripted expression that can be a [`Func`] or just a simple expression
 //! - [`Func`] - A function like `sin` that can contain independent super- and subscripts
-//!       prior to its argument
+//!   prior to its argument
 //! - [`SimpleScript`] - A simple expression that has super- and subscripts
 //! - [`Simple`] - A simple expression like a [`Symbol`][Simple::Symbol] or
-//!       [`Ident`][Simple::Ident]ifier
+//!   [`Ident`][Simple::Ident]ifier
 //!
 //! The exceptions to this hierarchy are [`Group`] and [`Matrix`] that "reset" the hierarchy by
 //! wrapping expressions.
@@ -38,6 +38,7 @@ impl<'a> SimpleUnary<'a> {
     }
 
     /// The operator argument
+    #[must_use]
     pub fn arg(&self) -> &Simple<'a> {
         &self.arg
     }
@@ -68,6 +69,7 @@ impl<'a> SimpleFunc<'a> {
     }
 
     /// The function argument
+    #[must_use]
     pub fn arg(&self) -> &Simple<'a> {
         &self.arg
     }
@@ -99,11 +101,13 @@ impl<'a> SimpleBinary<'a> {
     }
 
     /// The first operator argument
+    #[must_use]
     pub fn first(&self) -> &Simple<'a> {
         &self.first
     }
 
     /// The second operator argument
+    #[must_use]
     pub fn second(&self) -> &Simple<'a> {
         &self.second
     }
@@ -183,30 +187,40 @@ impl<'a> Matrix<'a> {
         assert_eq!(cells.len() / num_cols * num_cols, cells.len());
         Matrix {
             left_bracket,
-            right_bracket,
             cells,
             num_cols,
+            right_bracket,
         }
     }
 
     /// The number of columns
+    #[must_use]
     pub fn num_cols(&self) -> usize {
         self.num_cols
     }
 
     /// The number of rows
+    #[must_use]
     pub fn num_rows(&self) -> usize {
         self.cells.len() / self.num_cols
     }
 
     /// The number of total cells
+    #[must_use]
     pub fn num_cells(&self) -> usize {
         self.cells.len()
     }
 
     /// A top-down iterator over rows as slices
+    #[must_use]
     pub fn rows(&self) -> MatrixRows<'a, '_> {
         MatrixRows(self.cells.chunks_exact(self.num_cols))
+    }
+
+    /// A top-down iterator over rows as slices
+    #[must_use]
+    pub fn iter(&self) -> MatrixRows<'a, '_> {
+        self.into_iter()
     }
 }
 
@@ -275,9 +289,9 @@ impl<'a, 'b> Iterator for MatrixRows<'a, 'b> {
         self.next_back()
     }
 }
-impl<'a, 'b> FusedIterator for MatrixRows<'a, 'b> {}
+impl FusedIterator for MatrixRows<'_, '_> {}
 
-impl<'a, 'b> DoubleEndedIterator for MatrixRows<'a, 'b> {
+impl DoubleEndedIterator for MatrixRows<'_, '_> {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.0.next_back()
     }
@@ -287,7 +301,7 @@ impl<'a, 'b> DoubleEndedIterator for MatrixRows<'a, 'b> {
     }
 }
 
-impl<'a, 'b> ExactSizeIterator for MatrixRows<'a, 'b> {}
+impl ExactSizeIterator for MatrixRows<'_, '_> {}
 
 /// A simple element of parsing
 ///
@@ -320,8 +334,9 @@ pub enum Simple<'a> {
     Matrix(Matrix<'a>),
 }
 
-impl<'a> Simple<'a> {
+impl Simple<'_> {
     /// Get as an option where Missing is None
+    #[must_use]
     pub fn as_option(&self) -> Option<&Self> {
         match self {
             Simple::Missing => None,
@@ -367,19 +382,19 @@ pub enum Script<'a> {
 
 impl<'a> Script<'a> {
     /// Get the subscript
+    #[must_use]
     pub fn sub(&self) -> Option<&Simple<'a>> {
         match self {
-            Script::Sub(sub) => Some(sub),
-            Script::Subsuper(sub, _) => Some(sub),
+            Script::Sub(sub) | Script::Subsuper(sub, _) => Some(sub),
             _ => None,
         }
     }
 
     /// Get the superscript
+    #[must_use]
     pub fn sup(&self) -> Option<&Simple<'a>> {
         match self {
-            Script::Super(sup) => Some(sup),
-            Script::Subsuper(_, sup) => Some(sup),
+            Script::Super(sup) | Script::Subsuper(_, sup) => Some(sup),
             _ => None,
         }
     }
@@ -522,6 +537,7 @@ impl<'a> Func<'a> {
     }
 
     /// The function argument
+    #[must_use]
     pub fn arg(&self) -> &ScriptFunc<'a> {
         &self.arg
     }
@@ -544,7 +560,7 @@ pub enum ScriptFunc<'a> {
     Func(Func<'a>),
 }
 
-impl<'a> Default for ScriptFunc<'a> {
+impl Default for ScriptFunc<'_> {
     fn default() -> Self {
         ScriptFunc::Simple(SimpleScript::default())
     }
@@ -597,7 +613,7 @@ pub enum Intermediate<'a> {
     Frac(Frac<'a>),
 }
 
-impl<'a> Default for Intermediate<'a> {
+impl Default for Intermediate<'_> {
     fn default() -> Self {
         Intermediate::ScriptFunc(ScriptFunc::default())
     }
@@ -640,7 +656,7 @@ where
     where
         T: IntoIterator<Item = I>,
     {
-        Expression(iter.into_iter().map(|v| v.into()).collect())
+        Expression(iter.into_iter().map(std::convert::Into::into).collect())
     }
 }
 

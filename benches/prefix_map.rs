@@ -11,7 +11,7 @@ use asciimath_parser::prefix_map::FstPrefixMap;
 #[cfg(feature = "qp-trie")]
 use asciimath_parser::prefix_map::QpTriePrefixMap;
 use asciimath_parser::prefix_map::{HashPrefixMap, LinearPrefixMap};
-use asciimath_parser::{Tokenizer, ASCIIMATH_TOKENS};
+use asciimath_parser::{ASCIIMATH_TOKENS, Tokenizer};
 use examples::{EXAMPLES, RANDOM_EXAMPLES};
 use std::hint::black_box;
 use test::Bencher;

@@ -180,20 +180,18 @@ fn next_script_func<'a>(
     stop: Option<Token>,
 ) -> Option<ScriptFunc<'a>> {
     let cloned = tokens.clone();
-    match tokens.next() {
-        Some((func, Token::Function)) => Some(
+    if let Some((func, Token::Function)) = tokens.next() {
+        Some(
             Func::new(
                 func,
                 next_script(tokens),
                 next_script_func(tokens, None).unwrap_or_default(),
             )
             .into(),
-        ),
-        _ => {
-            *tokens = cloned; // rewind
-            next_simple(tokens, stop)
-                .map(|simp| SimpleScript::new(simp, next_script(tokens)).into())
-        }
+        )
+    } else {
+        *tokens = cloned; // rewind
+        next_simple(tokens, stop).map(|simp| SimpleScript::new(simp, next_script(tokens)).into())
     }
 }
 
@@ -203,15 +201,14 @@ fn next_intermediate<'a>(
 ) -> Option<Intermediate<'a>> {
     next_script_func(tokens, stop).map(|base| {
         let cloned = tokens.clone();
-        match tokens.next() {
-            Some((_, Token::Frac)) => Intermediate::Frac(Frac::new(
+        if let Some((_, Token::Frac)) = tokens.next() {
+            Intermediate::Frac(Frac::new(
                 base,
                 next_script_func(tokens, None).unwrap_or_default(),
-            )),
-            _ => {
-                *tokens = cloned; // rewind
-                Intermediate::ScriptFunc(base)
-            }
+            ))
+        } else {
+            *tokens = cloned; // rewind
+            Intermediate::ScriptFunc(base)
         }
     })
 }
@@ -222,7 +219,7 @@ where
     I: Iterator<Item = (&'a str, Token)> + Clone,
     T: IntoIterator<IntoIter = I>,
 {
-    let mut tokens = tokens.into_iter();
+    let mut tokens = tokens.into_iter().fuse();
     let mut inters = Vec::new();
     while let Some((close, Token::CloseBracket)) = {
         while let Some(inter) = next_intermediate(&mut tokens, None) {
@@ -236,13 +233,14 @@ where
         inters = vec![group.into()];
     }
     // NOTE this can still hide errors if the last token is unexpected
-    assert!(tokens.next().is_none(), "didn't exhaust tokens");
+    debug_assert!(tokens.next().is_none(), "didn't exhaust tokens");
     Expression::from(inters)
 }
 
 /// Parse a string returning an asciimath expression
 ///
-/// This uses an extended set of asciimath tokens that are accessible in [crate::ASCIIMATH_TOKENS].
+/// This uses an extended set of asciimath tokens that are accessible in [`crate::ASCIIMATH_TOKENS`].
+#[must_use]
 pub fn parse(inp: &str) -> Expression<'_> {
     parse_tokens(Tokenizer::new(inp))
 }

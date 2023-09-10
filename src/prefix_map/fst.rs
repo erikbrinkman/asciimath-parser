@@ -1,10 +1,8 @@
 use super::PrefixMap;
 use fst::{Automaton, IntoStreamer, Map, MapBuilder, Streamer};
-#[cfg(feature = "indexmap")]
-use indexmap::IndexSet;
 use std::borrow::Borrow;
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::hash::Hash;
 
 #[derive(Debug, Clone)]
@@ -17,7 +15,7 @@ enum PrefixesState {
     Success,
 }
 
-impl<'a> Automaton for Prefixes<'a> {
+impl Automaton for Prefixes<'_> {
     type State = PrefixesState;
 
     fn start(&self) -> Self::State {
@@ -73,9 +71,10 @@ where
 {
     /// Create from a vector of entries
     ///
-    /// Due to the interface of [PrefixMap] this requires a little extra heap allocation that could
+    /// Due to the interface of [`PrefixMap`] this requires a little extra heap allocation that could
     /// be avoided with a more concise interface for prefixes, but since this is already orders of
     /// magnitude slower than competing maps, this is mostly provided as a proof of concept.
+    #[allow(clippy::missing_panics_doc)]
     pub fn from_vec<K, B>(inp: B) -> Self
     where
         K: Borrow<str> + Eq,
@@ -94,7 +93,6 @@ where
                 Entry::Occupied(ent) => ent.into_mut(),
                 Entry::Vacant(ent) => ent.insert(next),
             };
-            // unwrap safe in most contexts usize -> u64
             let val = val_ind.try_into().unwrap();
             // unwrap is safe because in memory
             build.insert(key.borrow().as_bytes(), val).unwrap();

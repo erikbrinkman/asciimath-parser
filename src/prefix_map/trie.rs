@@ -60,7 +60,7 @@ where
             if subtrie.is_empty() {
                 break;
             } else if let Some(val) = subtrie.get(slice) {
-                res = Some((len, val))
+                res = Some((len, val));
             }
         }
         res

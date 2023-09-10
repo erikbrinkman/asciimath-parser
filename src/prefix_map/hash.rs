@@ -1,8 +1,8 @@
 use super::PrefixMap;
 use std::borrow::Borrow;
 use std::cmp::min;
-use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
+use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
 
 /// A prefix map that uses length buckets and hashmaps for lookups
@@ -67,10 +67,10 @@ where
             .enumerate()
             .rev()
         {
-            if inp.is_char_boundary(len) {
-                if let Some(val) = map.get(&inp[..len]) {
-                    return Some((len, val));
-                }
+            if inp.is_char_boundary(len)
+                && let Some(val) = map.get(&inp[..len])
+            {
+                return Some((len, val));
             }
         }
         None

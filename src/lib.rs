@@ -131,7 +131,7 @@
 //!
 //! If you want to consume this output and make sure the tokens are parsed correctly, you can use
 //! the exported const version of the tokens uses to parse. By default [`parse`][crate::parse()]
-//! uses [crate::ASCIIMATH_TOKENS]
+//! uses [`crate::ASCIIMATH_TOKENS`]
 //!
 //! ## Tree Structure
 //!
@@ -163,11 +163,13 @@
 //! # use asciimath_parser::tree::{Expression, Simple};
 //! let expr = Expression::from_iter([Simple::Ident("x")]);
 //! ```
-#![warn(missing_docs)]
+#![forbid(unsafe_code)]
+#![warn(clippy::pedantic, missing_docs)]
+
 mod parse;
 pub mod prefix_map;
 mod tokenizer;
 pub mod tree;
 
 pub use parse::{parse, parse_tokens};
-pub use tokenizer::{Token, Tokenizer, ASCIIMATH_TOKENS};
+pub use tokenizer::{ASCIIMATH_TOKENS, Token, Tokenizer};
