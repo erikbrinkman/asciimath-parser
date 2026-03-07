@@ -48,7 +48,7 @@ where
 impl<K: Borrow<str>, V> PrefixMap<V> for LinearPrefixMap<K, V> {
     fn get_longest_prefix<P: AsRef<str>>(&self, inp: P) -> Option<(usize, &V)> {
         let inp = inp.as_ref();
-        for (tag, val) in self.0.iter() {
+        for (tag, val) in &self.0 {
             let tag = tag.borrow();
             if inp.starts_with(tag) {
                 return Some((tag.len(), val));

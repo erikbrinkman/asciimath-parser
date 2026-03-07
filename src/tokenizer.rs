@@ -2,8 +2,8 @@
 use crate::prefix_map::{HashPrefixMap, PrefixMap};
 #[cfg(feature = "qp-trie")]
 use crate::prefix_map::{PrefixMap, QpTriePrefixMap};
-use lazy_static::lazy_static;
 use std::iter::FusedIterator;
+use std::sync::LazyLock;
 
 /// A parsed token label
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -117,13 +117,11 @@ pub type DefaultTokens = QpTriePrefixMap<&'static str, Token>;
 pub type DefaultTokens = HashPrefixMap<&'static str, Token>;
 
 #[cfg(feature = "qp-trie")]
-lazy_static! {
-    static ref DEFAULT_TOKENS: DefaultTokens = QpTriePrefixMap::from_iter(ASCIIMATH_TOKENS);
-}
+static DEFAULT_TOKENS: LazyLock<DefaultTokens> =
+    LazyLock::new(|| QpTriePrefixMap::from_iter(ASCIIMATH_TOKENS));
 #[cfg(not(feature = "qp-trie"))]
-lazy_static! {
-    static ref DEFAULT_TOKENS: DefaultTokens = HashPrefixMap::from_iter(ASCIIMATH_TOKENS);
-}
+static DEFAULT_TOKENS: LazyLock<DefaultTokens> =
+    LazyLock::new(|| HashPrefixMap::from_iter(ASCIIMATH_TOKENS));
 
 // TODO allow for negative sign preceeding numbers?
 fn strip_number(inp: &str) -> Option<(&str, &str)> {
@@ -138,8 +136,7 @@ fn strip_number(inp: &str) -> Option<(&str, &str)> {
             '0'..='9' => false,
             _ => true,
         })
-        .map(|(i, _)| i)
-        .unwrap_or(inp.len());
+        .map_or(inp.len(), |(i, _)| i);
     if len > 1 || (!seen_decimal && len > 0) {
         Some((&inp[..len], &inp[len..]))
     } else {
@@ -151,10 +148,10 @@ fn strip_number(inp: &str) -> Option<(&str, &str)> {
 fn strip_text(inp: &str) -> Option<(&str, &str)> {
     if inp.chars().next()? != '"' {
         return None;
-    };
+    }
     let (len, _) = inp[1..].char_indices().find(|(_, c)| c == &'"')?;
     // NOTE off by 1 because we skipped the first byte
-    Some((&inp[1..len + 1], &inp[len + 2..]))
+    Some((&inp[1..=len], &inp[len + 2..]))
 }
 
 /// A tokenizer where unknown characters are parsed as individual identifiers
@@ -185,6 +182,7 @@ impl<'a> Tokenizer<'a, 'static, DefaultTokens> {
     ///
     /// Tokenizer::with_tokens("...", &HashPrefixMap::from_iter(ASCIIMATH_TOKENS), true);
     /// ```
+    #[must_use]
     pub fn new(inp: &'a str) -> Self {
         Self::with_tokens(inp, &DEFAULT_TOKENS, true)
     }
@@ -207,7 +205,7 @@ impl<'a, 'b, T> Tokenizer<'a, 'b, T> {
     }
 }
 
-impl<'a, 'b, T> Iterator for Tokenizer<'a, 'b, T>
+impl<'a, T> Iterator for Tokenizer<'a, '_, T>
 where
     T: PrefixMap<Token>,
 {
@@ -216,25 +214,22 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         // remove whitespace
         self.remaining = self.remaining.trim_start();
-        if let Some((len, &token)) = self.token_map.get_longest_prefix(self.remaining) {
-            if len > 0 {
-                let (pref, rem) = self.remaining.split_at(len);
-                self.remaining = rem;
-                return Some((pref, token));
-            }
-        }
-        // number
-        if let Some((num, res)) = strip_number(self.remaining) {
+        if let Some((len, &token)) = self.token_map.get_longest_prefix(self.remaining)
+            && len > 0
+        {
+            let (pref, rem) = self.remaining.split_at(len);
+            self.remaining = rem;
+            Some((pref, token))
+        } else if let Some((num, res)) = strip_number(self.remaining) {
+            // number
             self.remaining = res;
-            return Some((num, Token::Number));
-        }
-        // text
-        if let Some((text, res)) = strip_text(self.remaining) {
+            Some((num, Token::Number))
+        } else if let Some((text, res)) = strip_text(self.remaining) {
+            // text
             self.remaining = res;
-            return Some((text, Token::Text));
-        }
-        // next char
-        if self.char_ident {
+            Some((text, Token::Text))
+        } else if self.char_ident {
+            // next char
             self.remaining.chars().next().map(|chr| {
                 let len = chr.len_utf8();
                 let raw = &self.remaining[..len];
@@ -252,11 +247,9 @@ where
                         || self
                             .token_map
                             .get_longest_prefix(&self.remaining[i..])
-                            .map(|(i, _)| i > 0)
-                            .unwrap_or(false)
+                            .is_some_and(|(i, _)| i > 0)
                 })
-                .map(|(i, _)| i)
-                .unwrap_or(self.remaining.len());
+                .map_or(self.remaining.len(), |(i, _)| i);
             if len == 0 {
                 None
             } else {
@@ -272,12 +265,12 @@ where
     }
 }
 
-impl<'a, 'b, T> FusedIterator for Tokenizer<'a, 'b, T> where T: PrefixMap<Token> {}
+impl<T> FusedIterator for Tokenizer<'_, '_, T> where T: PrefixMap<Token> {}
 
 #[cfg(test)]
 mod tests {
     use crate::prefix_map::HashPrefixMap;
-    use crate::{Token, Tokenizer, ASCIIMATH_TOKENS};
+    use crate::{ASCIIMATH_TOKENS, Token, Tokenizer};
 
     #[test]
     fn char_tokenizer() {

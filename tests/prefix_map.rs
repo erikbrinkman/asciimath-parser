@@ -3,21 +3,22 @@ use asciimath_parser::prefix_map::FstPrefixMap;
 #[cfg(feature = "qp-trie")]
 use asciimath_parser::prefix_map::QpTriePrefixMap;
 use asciimath_parser::prefix_map::{HashPrefixMap, LinearPrefixMap};
-use asciimath_parser::{Tokenizer, ASCIIMATH_TOKENS};
-use rand::distributions::{Alphanumeric, Slice};
+use asciimath_parser::{ASCIIMATH_TOKENS, Tokenizer};
+use rand::distr::Alphanumeric;
+use rand::distr::slice::Choose;
+use rand::distr::weighted::WeightedIndex;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
-use rand_distr::WeightedIndex;
+use rand::{Rng, RngExt, SeedableRng};
 
 fn random_string<V>(rng: &mut impl Rng, tokens: &[(&str, V)]) -> String {
-    let token = Slice::new(tokens).unwrap();
+    let token = Choose::new(tokens).unwrap();
     let choice = WeightedIndex::new([1, 1, 3]).unwrap();
 
     let mut res = String::new();
     for _ in 0..30 {
         match rng.sample(&choice) {
             0 => res.push(' '),
-            1 => res.push(rng.sample(Alphanumeric).try_into().unwrap()),
+            1 => res.push(rng.sample(Alphanumeric).into()),
             2 => res.push_str(rng.sample(&token).0),
             _ => unreachable!(),
         }

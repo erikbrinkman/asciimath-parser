@@ -4,18 +4,16 @@ version = "0.1.1"
 description = "A fast extensible memory-efficient asciimath parser"
 repository = "https://github.com/erikbrinkman/asciimath-parser"
 license = "MIT"
-edition = "2021"
+edition = "2024"
 
 [features]
 default = ["qp-trie"]
 
 [dependencies]
-fnv = { version = "1.0.7", optional = true }
-fst = { version = "0.4.7", optional = true }
-lazy_static = "1.4.0"
-qp-trie = { version = "0.8.0", optional = true }
+fnv = { version = "1.0", optional = true }
+fst = { version = "0.4", optional = true }
+qp-trie = { version = "0.8", optional = true }
 
 [dev-dependencies]
-asciimath-rs = "0.6.2"
-rand = "0.8.5"
-rand_distr = "0.4.3"
+asciimath-rs = "0.6"
+rand = "0.10"

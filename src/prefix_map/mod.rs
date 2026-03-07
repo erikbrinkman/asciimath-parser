@@ -1,11 +1,11 @@
-//! PrefixMaps are string keyed maps that support finding values with a longest prefix
+//! `PrefixMaps` are string keyed maps that support finding values with a longest prefix
 //!
 //! They are used by tokenizers to find valid tokens by seeing if the prefix of the current string
 //! maps to a known token. Since this is a large part of asciimath parsing, the efficient of these
 //! maps is heavily linked to overall parsing time.
 //!
 //! In benchmarks on random-ish strings, a prefix map based off of `qp-trie` was the fastest for
-//! parsing asciimath, but using an `fnv` backed [HashPrefixMap] was close behind.
+//! parsing asciimath, but using an `fnv` backed [`HashPrefixMap`] was close behind.
 //!
 //! # Benchmarks
 //!
@@ -58,7 +58,7 @@ pub use trie::QpTriePrefixMap;
 #[cfg(feature = "fnv")]
 pub type FnvHashPrefixMap<K, V> = HashPrefixMap<K, V, FnvBuildHasher>;
 
-/// A PrefixMap is a map that supports operations on the prefix of an input
+/// A `PrefixMap` is a map that supports operations on the prefix of an input
 pub trait PrefixMap<V> {
     /// Get the corresponding length and value of the key that is part of the lonest prefix of inp
     ///
@@ -78,7 +78,7 @@ where
     K: Eq,
 {
     // NOTE this can potentially be achieved better with drain_filter once it's stabalized
-    if let Some((ref first, _)) = inp.first() {
+    if let Some((first, _)) = inp.first() {
         let mut last = first;
         let mut off = 0;
         for ind in 1..inp.len() {
