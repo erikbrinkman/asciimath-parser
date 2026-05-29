@@ -6,7 +6,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, RngExt, SeedableRng};
 use std::sync::LazyLock;
 
-pub const EXAMPLES: [&'static str; 1] = ["sum_(i=1)^n i^3=((n(n+1))/2)^2"];
+pub const EXAMPLES: [&str; 1] = ["sum_(i=1)^n i^3=((n(n+1))/2)^2"];
 
 fn random_string<V>(rng: &mut impl Rng, tokens: &[(&str, V)]) -> String {
     let token = Choose::new(tokens).unwrap();
@@ -16,7 +16,7 @@ fn random_string<V>(rng: &mut impl Rng, tokens: &[(&str, V)]) -> String {
     for _ in 0..30 {
         match rng.sample(&choice) {
             0 => res.push(' '),
-            1 => res.push(rng.sample(Alphanumeric).try_into().unwrap()),
+            1 => res.push(rng.sample(Alphanumeric).into()),
             2 => res.push_str(rng.sample(&token).0),
             _ => unreachable!(),
         }
