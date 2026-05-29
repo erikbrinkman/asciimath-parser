@@ -1,10 +1,11 @@
-name: build
+name: tests
 
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,10 +16,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
-    - name: Build
-      run: cargo build --verbose
-    - name: Lint
-      run: cargo clippy --verbose
+    - uses: actions/checkout@v4
+    - name: Install nightly toolchain
+      run: rustup toolchain install nightly --component clippy
+    - uses: Swatinem/rust-cache@v2
+    - name: Build all features
+      run: cargo build --verbose --all-features
+    - name: Build no default features
+      run: cargo build --verbose --no-default-features
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test --verbose --all-features
+    - name: Run lints
+      run: cargo clippy --verbose --all-features -- -D warnings
+    - name: Run bench lints
+      run: cargo +nightly clippy --verbose --benches -- -D warnings
