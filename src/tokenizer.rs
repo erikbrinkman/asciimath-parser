@@ -273,6 +273,34 @@ mod tests {
     use crate::{ASCIIMATH_TOKENS, Token, Tokenizer};
 
     #[test]
+    fn decimal_numbers() {
+        let tokens: Vec<_> = Tokenizer::new("3.14 .5 1.2.3").collect();
+        assert_eq!(
+            *tokens,
+            [
+                ("3.14", Token::Number),
+                (".5", Token::Number),
+                ("1.2", Token::Number),
+                (".3", Token::Number),
+            ]
+        );
+    }
+
+    #[test]
+    fn unterminated_text() {
+        // an opening quote with no closing quote isn't text; the quote falls through to an ident
+        let tokens: Vec<_> = Tokenizer::new(r#""ab"#).collect();
+        assert_eq!(
+            *tokens,
+            [
+                ("\"", Token::Ident),
+                ("a", Token::Ident),
+                ("b", Token::Ident)
+            ]
+        );
+    }
+
+    #[test]
     fn char_tokenizer() {
         let tokens: Vec<_> =
             Tokenizer::new(r#"frac (abs x) xy / 7^2 "text with spaces""#).collect();

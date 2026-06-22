@@ -505,4 +505,70 @@ mod tests {
         .collect();
         assert_eq!(expr, expected);
     }
+
+    #[test]
+    fn raw_text() {
+        let expr = super::parse(r#""raw text""#);
+        let expected = Expression::from_iter([Simple::Text("raw text")]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn bare_symbol() {
+        let expr = super::parse("alpha");
+        let expected = Expression::from_iter([Simple::Symbol("alpha")]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn open_close_multiple_intermediates() {
+        // a left-right bracket group with more than one intermediate inside
+        let expr = super::parse("|a b|");
+        let expected = [Group::from_iter(
+            "|",
+            [Simple::Ident("a"), Simple::Ident("b")],
+            "|",
+        )]
+        .into_iter()
+        .collect();
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn unclosed_groups() {
+        // brackets that never close fall back to groups with an empty closing bracket. The matrix
+        // attempt for the inner "[" exhausts the tokens before closing, then unwinds to groups.
+        let expr = super::parse("[[a");
+        let expected = [Group::from_iter(
+            "[",
+            [Group::from_iter("[", [Simple::Ident("a")], "")],
+            "",
+        )]
+        .into_iter()
+        .collect();
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn ragged_matrix_is_group() {
+        // mismatched column counts mean the second row doesn't match, so it isn't a matrix
+        let expr = super::parse("[[a, b], [c]]");
+        let expected = [Group::from_iter(
+            "[",
+            [
+                Group::from_iter(
+                    "[",
+                    [Simple::Ident("a"), Simple::Symbol(","), Simple::Ident("b")],
+                    "]",
+                )
+                .into(),
+                Simple::Symbol(","),
+                Group::from_iter("[", [Simple::Ident("c")], "]").into(),
+            ],
+            "]",
+        )]
+        .into_iter()
+        .collect();
+        assert_eq!(expr, expected);
+    }
 }
