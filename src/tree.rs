@@ -668,3 +668,239 @@ where
         Expression(inp.into())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        Expression, Frac, Func, Group, Intermediate, Matrix, Script, ScriptFunc, Simple,
+        SimpleBinary, SimpleFunc, SimpleScript, SimpleUnary,
+    };
+
+    #[test]
+    fn simple_unary() {
+        let unary = SimpleUnary::new("sqrt", Simple::Ident("x"));
+        assert_eq!(unary.op, "sqrt");
+        assert_eq!(unary.arg(), &Simple::Ident("x"));
+        assert_eq!(
+            Simple::from(unary),
+            Simple::Unary(SimpleUnary::new("sqrt", Simple::Ident("x")))
+        );
+    }
+
+    #[test]
+    fn simple_func() {
+        let func = SimpleFunc::new("sin", Simple::Ident("x"));
+        assert_eq!(func.func, "sin");
+        assert_eq!(func.arg(), &Simple::Ident("x"));
+        assert_eq!(
+            Simple::from(func),
+            Simple::Func(SimpleFunc::new("sin", Simple::Ident("x")))
+        );
+    }
+
+    #[test]
+    fn simple_binary() {
+        let binary = SimpleBinary::new("root", Simple::Number("3"), Simple::Ident("x"));
+        assert_eq!(binary.op, "root");
+        assert_eq!(binary.first(), &Simple::Number("3"));
+        assert_eq!(binary.second(), &Simple::Ident("x"));
+        assert_eq!(
+            Simple::from(binary),
+            Simple::Binary(SimpleBinary::new(
+                "root",
+                Simple::Number("3"),
+                Simple::Ident("x")
+            )),
+        );
+    }
+
+    #[test]
+    fn group() {
+        let from_expr = Group::new("(", Expression::from_iter([Simple::Ident("x")]), ")");
+        let from_inters = Group::from_iter("(", [Simple::Ident("x")], ")");
+        assert_eq!(from_expr, from_inters);
+        assert_eq!(from_expr.left_bracket, "(");
+        assert_eq!(from_expr.right_bracket, ")");
+        assert_eq!(from_expr.expr.len(), 1);
+        assert_eq!(Simple::from(from_expr.clone()), Simple::Group(from_expr));
+    }
+
+    fn cell(ident: &str) -> Expression<'_> {
+        Expression::from_iter([Simple::Ident(ident)])
+    }
+
+    #[test]
+    fn matrix() {
+        let matrix = Matrix::new("[", [cell("a"), cell("b"), cell("c"), cell("d")], 2, "]");
+        assert_eq!(matrix.left_bracket, "[");
+        assert_eq!(matrix.right_bracket, "]");
+        assert_eq!(matrix.num_cols(), 2);
+        assert_eq!(matrix.num_rows(), 2);
+        assert_eq!(matrix.num_cells(), 4);
+
+        let rows: Vec<_> = matrix.rows().collect();
+        assert_eq!(rows, [[cell("a"), cell("b")], [cell("c"), cell("d")]]);
+        assert_eq!(matrix.iter().count(), 2);
+        assert_eq!((&matrix).into_iter().count(), 2);
+
+        assert_eq!(matrix[0], [cell("a"), cell("b")]);
+        assert_eq!(matrix[1], [cell("c"), cell("d")]);
+        assert_eq!(matrix[[0, 0]], cell("a"));
+        assert_eq!(matrix[[1, 0]], cell("b"));
+        assert_eq!(matrix[[0, 1]], cell("c"));
+        assert_eq!(matrix[[1, 1]], cell("d"));
+
+        assert_eq!(Simple::from(matrix.clone()), Simple::Matrix(matrix));
+    }
+
+    #[test]
+    #[should_panic(expected = "index out of bounds")]
+    fn matrix_row_out_of_bounds() {
+        let matrix = Matrix::new("[", [cell("a"), cell("b")], 2, "]");
+        let _ = &matrix[1];
+    }
+
+    #[test]
+    #[should_panic(expected = "index out of bounds")]
+    fn matrix_col_out_of_bounds() {
+        let matrix = Matrix::new("[", [cell("a"), cell("b")], 2, "]");
+        let _ = &matrix[[2, 0]];
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion")]
+    fn matrix_ragged() {
+        let _ = Matrix::new("[", [cell("a"), cell("b"), cell("c")], 2, "]");
+    }
+
+    #[test]
+    fn matrix_rows_iterator() {
+        let matrix = Matrix::new("[", [cell("a"), cell("b"), cell("c"), cell("d")], 1, "]");
+        assert_eq!(matrix.rows().len(), 4);
+        assert_eq!(matrix.rows().size_hint(), (4, Some(4)));
+        assert_eq!(matrix.rows().nth(2), Some(&[cell("c")][..]));
+        assert_eq!(matrix.rows().last(), Some(&[cell("d")][..]));
+
+        let mut back = matrix.rows();
+        assert_eq!(back.next_back(), Some(&[cell("d")][..]));
+        assert_eq!(back.nth_back(1), Some(&[cell("b")][..]));
+    }
+
+    #[test]
+    fn simple_as_option() {
+        assert_eq!(Simple::Missing.as_option(), None);
+        assert_eq!(Simple::Ident("x").as_option(), Some(&Simple::Ident("x")));
+        assert_eq!(Simple::default(), Simple::Missing);
+    }
+
+    #[test]
+    fn script_accessors() {
+        assert_eq!(Script::default(), Script::None);
+        assert_eq!(Script::<'_>::None.sub(), None);
+        assert_eq!(Script::<'_>::None.sup(), None);
+
+        let sub = Script::Sub(Simple::Ident("i"));
+        assert_eq!(sub.sub(), Some(&Simple::Ident("i")));
+        assert_eq!(sub.sup(), None);
+
+        let sup = Script::Super(Simple::Number("2"));
+        assert_eq!(sup.sub(), None);
+        assert_eq!(sup.sup(), Some(&Simple::Number("2")));
+
+        let both = Script::Subsuper(Simple::Ident("i"), Simple::Number("2"));
+        assert_eq!(both.sub(), Some(&Simple::Ident("i")));
+        assert_eq!(both.sup(), Some(&Simple::Number("2")));
+    }
+
+    #[test]
+    fn simple_script() {
+        let none = SimpleScript::without_scripts(Simple::Ident("x"));
+        assert_eq!(none.simple, Simple::Ident("x"));
+        // Deref to Script
+        assert_eq!(none.sub(), None);
+        assert_eq!(none.sup(), None);
+        assert_eq!(SimpleScript::default().simple, Simple::Missing);
+
+        let sub = SimpleScript::with_sub(Simple::Ident("x"), Simple::Ident("i"));
+        assert_eq!(sub.sub(), Some(&Simple::Ident("i")));
+
+        let sup = SimpleScript::with_super(Simple::Ident("x"), Simple::Number("2"));
+        assert_eq!(sup.sup(), Some(&Simple::Number("2")));
+
+        let both = SimpleScript::with_subsuper(
+            Simple::Ident("x"),
+            Simple::Ident("i"),
+            Simple::Number("2"),
+        );
+        assert_eq!(both.sub(), Some(&Simple::Ident("i")));
+        assert_eq!(both.sup(), Some(&Simple::Number("2")));
+
+        // From any Into<Simple>
+        assert_eq!(SimpleScript::from(Simple::Ident("x")), none);
+    }
+
+    #[test]
+    fn func() {
+        let none = Func::without_scripts("sum", Simple::Ident("x"));
+        assert_eq!(none.func, "sum");
+        assert_eq!(none.arg(), &ScriptFunc::from(Simple::Ident("x")));
+        // Deref to Script
+        assert_eq!(none.sub(), None);
+
+        let sub = Func::with_sub("sum", Simple::Ident("i"), Simple::Ident("x"));
+        assert_eq!(sub.sub(), Some(&Simple::Ident("i")));
+
+        let sup = Func::with_super("sum", Simple::Number("n"), Simple::Ident("x"));
+        assert_eq!(sup.sup(), Some(&Simple::Number("n")));
+
+        let both = Func::with_subsuper(
+            "sum",
+            Simple::Ident("i"),
+            Simple::Number("n"),
+            Simple::Ident("x"),
+        );
+        assert_eq!(both.sub(), Some(&Simple::Ident("i")));
+        assert_eq!(both.sup(), Some(&Simple::Number("n")));
+    }
+
+    #[test]
+    fn script_func() {
+        let from_func = ScriptFunc::from(Func::without_scripts("sum", Simple::Ident("x")));
+        assert!(matches!(from_func, ScriptFunc::Func(_)));
+        let from_simple = ScriptFunc::from(Simple::Ident("x"));
+        assert!(matches!(from_simple, ScriptFunc::Simple(_)));
+        assert_eq!(
+            ScriptFunc::default(),
+            ScriptFunc::Simple(SimpleScript::default())
+        );
+    }
+
+    #[test]
+    fn frac_and_intermediate() {
+        let frac = Frac::new(Simple::Number("1"), Simple::Number("2"));
+        assert_eq!(frac.numer, ScriptFunc::from(Simple::Number("1")));
+        assert_eq!(frac.denom, ScriptFunc::from(Simple::Number("2")));
+
+        assert_eq!(Intermediate::from(frac.clone()), Intermediate::Frac(frac));
+        assert!(matches!(
+            Intermediate::from(Simple::Ident("x")),
+            Intermediate::ScriptFunc(_)
+        ));
+        assert!(matches!(
+            Intermediate::default(),
+            Intermediate::ScriptFunc(_)
+        ));
+    }
+
+    #[test]
+    fn expression() {
+        let expr = Expression::from_iter([Simple::Ident("x"), Simple::Ident("y")]);
+        // Deref to slice
+        assert_eq!(expr.len(), 2);
+        assert_eq!(expr[0], Intermediate::from(Simple::Ident("x")));
+        assert_eq!(Expression::default().len(), 0);
+
+        let boxed: Box<[Intermediate<'_>]> = Box::new([Intermediate::from(Simple::Ident("x"))]);
+        assert_eq!(Expression::from(boxed).len(), 1);
+    }
+}

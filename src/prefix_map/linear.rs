@@ -78,4 +78,19 @@ mod tests {
         assert_eq!(map.get_longest_prefix(" 3 "), Some((2, &1)));
         assert_eq!(map.get_longest_prefix("ab"), Some((0, &0)));
     }
+
+    #[test]
+    fn from_iter_matches_from_vec() {
+        let entries = [("a", 0), ("abc", 1), ("bc", 2), ("bc", 3)];
+        let from_iter: LinearPrefixMap<_, _> = entries.into_iter().collect();
+        assert_eq!(from_iter, LinearPrefixMap::from_vec(entries));
+        assert_eq!(from_iter.get_longest_prefix("abcd"), Some((3, &1)));
+    }
+
+    #[test]
+    fn empty_map() {
+        // exercises the empty branch of remove_ordered_dups
+        let map = LinearPrefixMap::from_vec(Vec::<(&str, i32)>::new());
+        assert_eq!(map.get_longest_prefix("anything"), None);
+    }
 }

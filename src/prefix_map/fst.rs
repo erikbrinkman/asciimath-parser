@@ -168,4 +168,12 @@ mod tests {
         assert_eq!(map.get_longest_prefix(" 3 "), Some((2, &1)));
         assert_eq!(map.get_longest_prefix("ab"), Some((0, &0)));
     }
+
+    #[test]
+    fn from_iter_matches_from_vec() {
+        let entries = [("a", 0), ("abc", 1), ("bc", 2), ("bc", 3)];
+        let from_iter: FstPrefixMap<_> = entries.into_iter().collect();
+        assert_eq!(from_iter.get_longest_prefix("abcd"), Some((3, &1)));
+        assert_eq!(from_iter.get_longest_prefix("ab"), Some((1, &0)));
+    }
 }
