@@ -5,6 +5,9 @@ description = "A fast extensible memory-efficient asciimath parser"
 repository = "https://github.com/erikbrinkman/asciimath-parser"
 license = "MIT"
 edition = "2024"
+documentation = "https://docs.rs/asciimath-parser"
+keywords = ["asciimath", "parser", "math"]
+categories = ["parser-implementations", "mathematics"]
 
 [features]
 default = ["qp-trie"]
