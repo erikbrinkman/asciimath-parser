@@ -158,12 +158,14 @@ impl<'a> Group<'a> {
 /// A matrix e.g. "[[a, b], [x, y]]"
 ///
 /// Individual expressions can be accessed with [rows][Matrix::rows] to get a random access iterator of row
-/// slices, or by indexing with a 2d array of indices, e.g. `matrix[[0, 0]]`
+/// slices, or by indexing with a 2d array of indices in `[column, row]` order, e.g. `matrix[[0, 0]]`.
+/// Note that this is the opposite of the conventional `[row, column]` order used by libraries like
+/// ndarray and nalgebra.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Matrix<'a> {
     /// The matrix's left bracket
     pub left_bracket: &'a str,
-    /// The cells in the matrix in colum-wise order
+    /// The cells in the matrix in row-major order
     cells: Box<[Expression<'a>]>,
     /// The number of columns in the matrix
     num_cols: usize,
@@ -252,6 +254,9 @@ impl<'a> Index<[usize; 2]> for Matrix<'a> {
     type Output = Expression<'a>;
 
     /// Get an individual expression
+    ///
+    /// The index is in `[column, row]` order — the opposite of the conventional `[row, column]`
+    /// order used by libraries like ndarray and nalgebra.
     ///
     /// # Panics
     /// When indices are out of bounds `[x, y]`, `x >= num_cols`, `y >= num_rows`
