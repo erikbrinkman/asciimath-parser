@@ -316,16 +316,19 @@ impl<'a> Parser<'a> {
 
     fn parse(&mut self) -> Expression<'a> {
         let mut inters = Vec::new();
+        let mut wraps = 0;
         loop {
             while let Some(inter) = self.next_intermediate(None) {
                 inters.push(inter);
             }
             match self.advance() {
                 Some((close, Token::CloseBracket)) => {
-                    // NOTE we could insert the token as an extra symbol instead of closing with an
-                    // invisible bracket
-                    let group = Simple::Group(Group::new("", inters, close));
-                    inters = vec![group.into()];
+                    // cap the invisible-group nesting so the tree stays bounded; drop excess closes
+                    if wraps < MAX_DEPTH {
+                        let group = Simple::Group(Group::new("", inters, close));
+                        inters = vec![group.into()];
+                        wraps += 1;
+                    }
                 }
                 other => {
                     // NOTE this can still hide errors if the last token is unexpected
@@ -676,6 +679,16 @@ mod tests {
         let input = "sin ".repeat(100_000);
         let expr = super::parse(&input);
         assert!(!expr.is_empty());
+    }
+
+    #[test]
+    fn many_unmatched_closes_are_capped() {
+        // capped to a bounded tree, so clone/compare/drop are all safe
+        let input = ")".repeat(200_000);
+        let expr = super::parse(&input);
+        assert_eq!(expr.len(), 1);
+        let cloned = expr.clone();
+        assert_eq!(expr, cloned);
     }
 
     #[test]
