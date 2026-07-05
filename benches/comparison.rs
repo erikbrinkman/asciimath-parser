@@ -5,7 +5,6 @@ mod examples;
 extern crate test;
 
 use ::asciimath_parser::parse as amp_parse;
-use ::asciimath_rs::parse as amrs_parse;
 use examples::{EXAMPLES, RANDOM_EXAMPLES};
 use std::hint::black_box;
 use test::Bencher;
@@ -38,4 +37,3 @@ macro_rules! make_bench {
 }
 
 make_bench! {asciimath_parser, amp_parse}
-make_bench! {asciimath_rs, amrs_parse}
