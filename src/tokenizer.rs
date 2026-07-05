@@ -54,7 +54,7 @@ macro_rules! tokens {
 ///
 /// This a a constant exported to enable easily alternate parsing, or verification of string
 /// slices.
-pub const ASCIIMATH_TOKENS: [(&str, Token); 351] = tokens!(
+pub const ASCIIMATH_TOKENS: [(&str, Token); 352] = tokens!(
     Frac => "/";
     Super => "^";
     Sub => "_";
@@ -106,7 +106,7 @@ pub const ASCIIMATH_TOKENS: [(&str, Token); 351] = tokens!(
     // brackets
     OpenBracket => "(", "[", "{", "|:", "(:", "<<", "langle", "left(", "left[", "{:";
     CloseBracket => ")", "]", "}", ":|", ":)", ">>", "rangle", "right)", "right]", ":}";
-    OpenCloseBracket => "|";
+    OpenCloseBracket => "|", "||";
     // defined identifiers
     Ident => "dx", "dy", "dz", "dt";
 );
