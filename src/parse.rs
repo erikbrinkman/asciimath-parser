@@ -4,237 +4,346 @@ use crate::tree::{
 };
 use crate::{Token, Tokenizer};
 
-fn next_simple<'a>(
-    tokens: &mut (impl Iterator<Item = (&'a str, Token)> + Clone),
-    stop: Option<Token>,
-) -> Option<Simple<'a>> {
-    let cloned = tokens.clone();
-    match tokens.next() {
-        Some((_, token)) if Some(token) == stop => {
-            *tokens = cloned; // rewind
-            None
-        }
-        Some((num, Token::Number)) => Some(Simple::Number(num)),
-        Some((text, Token::Text)) => Some(Simple::Text(text)),
-        Some((ident, Token::Ident)) => Some(Simple::Ident(ident)),
-        Some((symb, Token::Symbol)) => Some(Simple::Symbol(symb)),
-        Some((unary, Token::Unary)) => {
-            Some(SimpleUnary::new(unary, next_simple(tokens, None).unwrap_or_default()).into())
-        }
-        Some((func, Token::Function)) => {
-            Some(SimpleFunc::new(func, next_simple(tokens, None).unwrap_or_default()).into())
-        }
-        Some((binary, Token::Binary)) => Some(
-            SimpleBinary::new(
-                binary,
-                next_simple(tokens, None).unwrap_or_default(),
-                next_simple(tokens, None).unwrap_or_default(),
-            )
-            .into(),
-        ),
-        Some((_, Token::CloseBracket)) => {
-            // always stop on close bracket
-            *tokens = cloned; // rewind
-            None
-        }
-        Some((open, Token::OpenBracket)) => {
-            let cloned = tokens.clone();
-            // first try to parse matrix
-            Some(if let Some(matrix) = next_matrix(tokens, open) {
-                matrix.into()
-            } else {
-                *tokens = cloned; // rewind before matrix
-                next_open_group(tokens, open).into()
+/// The maximum recursion depth before deeper structure is treated as [missing][Simple::Missing].
+///
+/// Recursion depth is otherwise linear in the input length, so deeply-nested input like
+/// `"sqrt ".repeat(100_000)` would overflow the stack and abort the process.
+const MAX_DEPTH: usize = 256;
+
+/// A token paired with the bracket-matching info precomputed for its position.
+struct Entry<'a> {
+    text: &'a str,
+    token: Token,
+    /// Matching close-bracket index for an open bracket, or `usize::MAX` if unmatched.
+    close: usize,
+    /// Whether this open bracket has a top-level separator (more than one column).
+    has_sep: bool,
+}
+
+/// A recursive-descent parser over a materialized token slice.
+///
+/// The index cursor makes backtracking a `pos` assignment, and a one-pass precompute of matching
+/// brackets makes matrix detection O(1), keeping the parse linear.
+struct Parser<'a> {
+    entries: Box<[Entry<'a>]>,
+    pos: usize,
+    /// Current recursion depth, bounded by [`MAX_DEPTH`].
+    depth: usize,
+}
+
+impl<'a> Parser<'a> {
+    fn new(tokens: impl IntoIterator<Item = (&'a str, Token)>) -> Self {
+        // collect straight into entries; unmatched open brackets keep close == usize::MAX
+        let mut entries: Vec<Entry<'a>> = tokens
+            .into_iter()
+            .map(|(text, token)| Entry {
+                text,
+                token,
+                close: usize::MAX,
+                has_sep: false,
             })
-        }
-        Some((open, Token::OpenCloseBracket)) => Some(next_open_close_group(tokens, open)),
-        Some((raw, Token::Frac | Token::Super | Token::Sub | Token::Sep)) => {
-            Some(Simple::Symbol(raw))
-        }
-        None => None,
-    }
-}
-
-fn next_open_group<'a>(
-    tokens: &mut (impl Iterator<Item = (&'a str, Token)> + Clone),
-    open: &'a str,
-) -> Group<'a> {
-    let expr = next_expression(tokens, None);
-    let close = match tokens.next() {
-        Some((bracket, Token::CloseBracket)) => bracket,
-        Some(_) => unreachable!("terminated on non-closing-bracket token"),
-        None => "",
-    };
-    Group::new(open, expr, close)
-}
-
-fn next_open_close_group<'a>(
-    tokens: &mut (impl Iterator<Item = (&'a str, Token)> + Clone),
-    open: &'a str,
-) -> Simple<'a> {
-    let cloned = tokens.clone();
-    if let Some(first) = next_intermediate(tokens, None) {
-        // Here we take the first token, even if it's another OpenCloseBracket
-        let mut inters = vec![first];
-        while let Some(inter) = next_intermediate(tokens, Some(Token::OpenCloseBracket)) {
-            inters.push(inter);
-        }
-        match tokens.next() {
-            Some((close, Token::OpenCloseBracket)) => {
-                Simple::Group(Group::new(open, inters, close))
+            .collect();
+        // one linear pass matches brackets and records top-level separators
+        let mut open_stack: Vec<usize> = Vec::new();
+        for index in 0..entries.len() {
+            match entries[index].token {
+                Token::OpenBracket => open_stack.push(index),
+                Token::CloseBracket => {
+                    if let Some(open) = open_stack.pop() {
+                        entries[open].close = index;
+                    }
+                }
+                Token::Sep => {
+                    if let Some(&open) = open_stack.last() {
+                        entries[open].has_sep = true;
+                    }
+                }
+                _ => {}
             }
-            Some((_, Token::CloseBracket)) | None => {
-                *tokens = cloned; // rewind
+        }
+        Parser {
+            entries: entries.into(),
+            pos: 0,
+            depth: 0,
+        }
+    }
+
+    /// Consume and return the next token, advancing the cursor.
+    fn advance(&mut self) -> Option<(&'a str, Token)> {
+        let item = self
+            .entries
+            .get(self.pos)
+            .map(|entry| (entry.text, entry.token));
+        if item.is_some() {
+            self.pos += 1;
+        }
+        item
+    }
+
+    fn next_simple(&mut self, stop: Option<Token>) -> Option<Simple<'a>> {
+        if self.depth >= MAX_DEPTH {
+            return None;
+        }
+        self.depth += 1;
+        let mark = self.pos;
+        let result = match self.advance() {
+            Some((_, token)) if Some(token) == stop => {
+                self.pos = mark; // rewind
+                None
+            }
+            Some((num, Token::Number)) => Some(Simple::Number(num)),
+            Some((text, Token::Text)) => Some(Simple::Text(text)),
+            Some((ident, Token::Ident)) => Some(Simple::Ident(ident)),
+            Some((symb, Token::Symbol)) => Some(Simple::Symbol(symb)),
+            Some((unary, Token::Unary)) => {
+                Some(SimpleUnary::new(unary, self.next_simple(None).unwrap_or_default()).into())
+            }
+            Some((func, Token::Function)) => {
+                Some(SimpleFunc::new(func, self.next_simple(None).unwrap_or_default()).into())
+            }
+            Some((binary, Token::Binary)) => Some(
+                SimpleBinary::new(
+                    binary,
+                    self.next_simple(None).unwrap_or_default(),
+                    self.next_simple(None).unwrap_or_default(),
+                )
+                .into(),
+            ),
+            Some((_, Token::CloseBracket)) => {
+                self.pos = mark; // rewind; always stop on close bracket
+                None
+            }
+            Some((open, Token::OpenBracket)) => Some({
+                // gate the matrix parse on the precompute; done unconditionally it's exponential
+                let matrix = self.could_be_matrix().then(|| {
+                    let mark = self.pos;
+                    self.next_matrix(open).or_else(|| {
+                        self.pos = mark; // rewind before the failed matrix attempt
+                        None
+                    })
+                });
+                match matrix {
+                    Some(Some(matrix)) => matrix.into(),
+                    _ => self.next_open_group(open).into(),
+                }
+            }),
+            Some((open, Token::OpenCloseBracket)) => Some(self.next_open_close_group(open)),
+            Some((raw, Token::Frac | Token::Super | Token::Sub | Token::Sep)) => {
+                Some(Simple::Symbol(raw))
+            }
+            None => None,
+        };
+        self.depth -= 1;
+        result
+    }
+
+    /// Whether the just-consumed open bracket (at `self.pos - 1`) begins a matrix.
+    ///
+    /// O(1) via the precomputed tables; only returns `false` when [`next_matrix`][Self::next_matrix]
+    /// would certainly fail, so results are unchanged.
+    fn could_be_matrix(&self) -> bool {
+        let outer_open = self.pos - 1;
+        let row_open = self.pos;
+        // the first row must itself open with a bracket
+        if !self
+            .entries
+            .get(row_open)
+            .is_some_and(|entry| entry.token == Token::OpenBracket)
+        {
+            return false;
+        }
+        let row_close = self.entries[row_open].close;
+        if row_close >= self.entries.len() {
+            return false; // the first row never closes
+        }
+        let after = row_close + 1;
+        if self
+            .entries
+            .get(after)
+            .is_some_and(|entry| entry.token == Token::Sep)
+        {
+            true // a separator implies a second row
+        } else if after == self.entries[outer_open].close {
+            self.entries[row_open].has_sep // single row: a matrix only with more than one column
+        } else {
+            false
+        }
+    }
+
+    fn next_open_group(&mut self, open: &'a str) -> Group<'a> {
+        let expr = self.next_expression(None);
+        let mark = self.pos;
+        let close = if let Some((bracket, Token::CloseBracket)) = self.advance() {
+            bracket
+        } else {
+            // unterminated (EOF or depth-capped): rewind and close with an empty bracket
+            self.pos = mark; // rewind
+            ""
+        };
+        Group::new(open, expr, close)
+    }
+
+    fn next_open_close_group(&mut self, open: &'a str) -> Simple<'a> {
+        let mark = self.pos;
+        if let Some(first) = self.next_intermediate(None) {
+            // take the first intermediate, even if it's another OpenCloseBracket
+            let mut inters = vec![first];
+            while let Some(inter) = self.next_intermediate(Some(Token::OpenCloseBracket)) {
+                inters.push(inter);
+            }
+            if let Some((close, Token::OpenCloseBracket)) = self.advance() {
+                Simple::Group(Group::new(open, inters, close))
+            } else {
+                // couldn't match the left-right bracket, so rewind and treat it as a symbol
+                self.pos = mark; // rewind
                 Simple::Symbol(open)
             }
-            Some(_) => unreachable!("terminated on non-bracket token"),
-        }
-    } else {
-        // empty so must return symbol
-        Simple::Symbol(open)
-    }
-}
-
-fn next_expression<'a>(
-    tokens: &mut (impl Iterator<Item = (&'a str, Token)> + Clone),
-    stop: Option<Token>,
-) -> Expression<'a> {
-    let mut inters = Vec::new();
-    while let Some(inter) = next_intermediate(tokens, stop) {
-        inters.push(inter);
-    }
-    inters.into()
-}
-
-fn next_matrix_row<'a>(
-    tokens: &mut (impl Iterator<Item = (&'a str, Token)> + Clone),
-    exprs: &mut impl Extend<Expression<'a>>,
-) -> Option<(&'a str, usize, &'a str)> {
-    let open = match tokens.next() {
-        Some((open, Token::OpenBracket)) => Some(open),
-        _ => None,
-    }?;
-    let mut len = 1;
-    exprs.extend([next_expression(tokens, Some(Token::Sep))]);
-    loop {
-        match tokens.next() {
-            Some((_, Token::Sep)) => {
-                exprs.extend([next_expression(tokens, Some(Token::Sep))]);
-                len += 1;
-            }
-            Some((close, Token::CloseBracket)) => {
-                return Some((open, len, close));
-            }
-            _ => return None,
+        } else {
+            // empty so must return symbol
+            Simple::Symbol(open)
         }
     }
-}
 
-fn next_matrix<'a>(
-    tokens: &mut (impl Iterator<Item = (&'a str, Token)> + Clone),
-    left: &'a str,
-) -> Option<Matrix<'a>> {
-    let mut data = Vec::new();
-    let (open, num_cols, close) = next_matrix_row(tokens, &mut data)?;
-    loop {
-        match tokens.next() {
-            Some((_, Token::Sep)) => {
-                let (no, ncols, nc) = next_matrix_row(tokens, &mut data)?;
-                if no != open || ncols != num_cols || nc != close {
-                    return None;
+    fn next_expression(&mut self, stop: Option<Token>) -> Expression<'a> {
+        let mut inters = Vec::new();
+        while let Some(inter) = self.next_intermediate(stop) {
+            inters.push(inter);
+        }
+        inters.into()
+    }
+
+    fn next_matrix_row(
+        &mut self,
+        exprs: &mut impl Extend<Expression<'a>>,
+    ) -> Option<(&'a str, usize, &'a str)> {
+        let open = match self.advance() {
+            Some((open, Token::OpenBracket)) => Some(open),
+            _ => None,
+        }?;
+        let mut len = 1;
+        exprs.extend([self.next_expression(Some(Token::Sep))]);
+        loop {
+            match self.advance() {
+                Some((_, Token::Sep)) => {
+                    exprs.extend([self.next_expression(Some(Token::Sep))]);
+                    len += 1;
+                }
+                Some((close, Token::CloseBracket)) => return Some((open, len, close)),
+                _ => return None,
+            }
+        }
+    }
+
+    fn next_matrix(&mut self, left: &'a str) -> Option<Matrix<'a>> {
+        let mut data = Vec::new();
+        let (open, num_cols, close) = self.next_matrix_row(&mut data)?;
+        loop {
+            match self.advance() {
+                Some((_, Token::Sep)) => {
+                    let (no, ncols, nc) = self.next_matrix_row(&mut data)?;
+                    if no != open || ncols != num_cols || nc != close {
+                        return None;
+                    }
+                }
+                Some((right, Token::CloseBracket))
+                    if data.len() > 1 && open == left && close == right =>
+                {
+                    return Some(Matrix::new(left, data, num_cols, right));
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    fn next_script(&mut self) -> Script<'a> {
+        let mark = self.pos;
+        match self.advance() {
+            Some((_, Token::Super)) => Script::Super(self.next_simple(None).unwrap_or_default()),
+            Some((_, Token::Sub)) => {
+                let sub = self.next_simple(None).unwrap_or_default();
+                let mark = self.pos;
+                if let Some((_, Token::Super)) = self.advance() {
+                    Script::Subsuper(sub, self.next_simple(None).unwrap_or_default())
+                } else {
+                    self.pos = mark; // rewind
+                    Script::Sub(sub)
                 }
             }
-            Some((right, Token::CloseBracket))
-                if data.len() > 1 && open == left && close == right =>
-            {
-                return Some(Matrix::new(left, data, num_cols, right));
-            }
-            _ => return None,
-        }
-    }
-}
-
-fn next_script<'a>(tokens: &mut (impl Iterator<Item = (&'a str, Token)> + Clone)) -> Script<'a> {
-    let cloned = tokens.clone();
-    match tokens.next() {
-        Some((_, Token::Super)) => Script::Super(next_simple(tokens, None).unwrap_or_default()),
-        Some((_, Token::Sub)) => {
-            let sub = next_simple(tokens, None).unwrap_or_default();
-            let cloned = tokens.clone();
-            if let Some((_, Token::Super)) = tokens.next() {
-                Script::Subsuper(sub, next_simple(tokens, None).unwrap_or_default())
-            } else {
-                *tokens = cloned; // rewind
-                Script::Sub(sub)
+            _ => {
+                self.pos = mark; // rewind
+                Script::None
             }
         }
-        _ => {
-            *tokens = cloned; // rewind
-            Script::None
-        }
     }
-}
 
-fn next_script_func<'a>(
-    tokens: &mut (impl Iterator<Item = (&'a str, Token)> + Clone),
-    stop: Option<Token>,
-) -> Option<ScriptFunc<'a>> {
-    let cloned = tokens.clone();
-    if let Some((func, Token::Function)) = tokens.next() {
-        Some(
-            Func::new(
-                func,
-                next_script(tokens),
-                next_script_func(tokens, None).unwrap_or_default(),
+    fn next_script_func(&mut self, stop: Option<Token>) -> Option<ScriptFunc<'a>> {
+        if self.depth >= MAX_DEPTH {
+            return None;
+        }
+        self.depth += 1;
+        let mark = self.pos;
+        let result = if let Some((func, Token::Function)) = self.advance() {
+            Some(
+                Func::new(
+                    func,
+                    self.next_script(),
+                    self.next_script_func(None).unwrap_or_default(),
+                )
+                .into(),
             )
-            .into(),
-        )
-    } else {
-        *tokens = cloned; // rewind
-        next_simple(tokens, stop).map(|simp| SimpleScript::new(simp, next_script(tokens)).into())
-    }
-}
-
-fn next_intermediate<'a>(
-    tokens: &mut (impl Iterator<Item = (&'a str, Token)> + Clone),
-    stop: Option<Token>,
-) -> Option<Intermediate<'a>> {
-    next_script_func(tokens, stop).map(|base| {
-        let cloned = tokens.clone();
-        if let Some((_, Token::Frac)) = tokens.next() {
-            Intermediate::Frac(Frac::new(
-                base,
-                next_script_func(tokens, None).unwrap_or_default(),
-            ))
         } else {
-            *tokens = cloned; // rewind
-            Intermediate::ScriptFunc(base)
+            self.pos = mark; // rewind
+            self.next_simple(stop)
+                .map(|simp| SimpleScript::new(simp, self.next_script()).into())
+        };
+        self.depth -= 1;
+        result
+    }
+
+    fn next_intermediate(&mut self, stop: Option<Token>) -> Option<Intermediate<'a>> {
+        let base = self.next_script_func(stop)?;
+        let mark = self.pos;
+        if let Some((_, Token::Frac)) = self.advance() {
+            Some(Intermediate::Frac(Frac::new(
+                base,
+                self.next_script_func(None).unwrap_or_default(),
+            )))
+        } else {
+            self.pos = mark; // rewind
+            Some(Intermediate::ScriptFunc(base))
         }
-    })
+    }
+
+    fn parse(&mut self) -> Expression<'a> {
+        let mut inters = Vec::new();
+        loop {
+            while let Some(inter) = self.next_intermediate(None) {
+                inters.push(inter);
+            }
+            match self.advance() {
+                Some((close, Token::CloseBracket)) => {
+                    // NOTE we could insert the token as an extra symbol instead of closing with an
+                    // invisible bracket
+                    let group = Simple::Group(Group::new("", inters, close));
+                    inters = vec![group.into()];
+                }
+                other => {
+                    // NOTE this can still hide errors if the last token is unexpected
+                    debug_assert!(other.is_none(), "didn't exhaust tokens");
+                    break;
+                }
+            }
+        }
+        Expression::from(inters)
+    }
 }
 
 /// Parse a tokenized expression
-pub fn parse_tokens<'a, T, I>(tokens: T) -> Expression<'a>
+pub fn parse_tokens<'a, T>(tokens: T) -> Expression<'a>
 where
-    I: Iterator<Item = (&'a str, Token)> + Clone,
-    T: IntoIterator<IntoIter = I>,
+    T: IntoIterator<Item = (&'a str, Token)>,
 {
-    let mut tokens = tokens.into_iter().fuse();
-    let mut inters = Vec::new();
-    while let Some((close, Token::CloseBracket)) = {
-        while let Some(inter) = next_intermediate(&mut tokens, None) {
-            inters.push(inter);
-        }
-        tokens.next()
-    } {
-        // NOTE we could insert the token as an extra symbol instead of closing with an invisible
-        // bracket
-        let group = Simple::Group(Group::new("", inters, close));
-        inters = vec![group.into()];
-    }
-    // NOTE this can still hide errors if the last token is unexpected
-    debug_assert!(tokens.next().is_none(), "didn't exhaust tokens");
-    Expression::from(inters)
+    Parser::new(tokens).parse()
 }
 
 /// Parse a string returning an asciimath expression
@@ -532,8 +641,7 @@ mod tests {
 
     #[test]
     fn unclosed_groups() {
-        // brackets that never close fall back to groups with an empty closing bracket. The matrix
-        // attempt for the inner "[" exhausts the tokens before closing, then unwinds to groups.
+        // brackets that never close fall back to groups with an empty closing bracket
         let expr = super::parse("[[a");
         let expected = [Group::from_iter(
             "[",
@@ -543,6 +651,31 @@ mod tests {
         .into_iter()
         .collect();
         assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn deep_nested_brackets_are_not_exponential() {
+        // nested brackets used to be exponential (this would hang); it must be linear now
+        let depth = 150;
+        let input = format!("{}a{}", "(".repeat(depth), ")".repeat(depth));
+        let expr = super::parse(&input);
+        assert_eq!(expr.len(), 1);
+    }
+
+    #[test]
+    fn deep_unary_chain_does_not_overflow() {
+        // a deep unary chain must not overflow the stack (recurses via next_simple)
+        let input = "sqrt ".repeat(100_000);
+        let expr = super::parse(&input);
+        assert!(!expr.is_empty());
+    }
+
+    #[test]
+    fn deep_function_chain_does_not_overflow() {
+        // a deep function chain must not overflow the stack (recurses via next_script_func)
+        let input = "sin ".repeat(100_000);
+        let expr = super::parse(&input);
+        assert!(!expr.is_empty());
     }
 
     #[test]
@@ -561,6 +694,63 @@ mod tests {
                 Simple::Symbol(","),
                 Group::from_iter("[", [Simple::Ident("c")], "]").into(),
             ],
+            "]",
+        )]
+        .into_iter()
+        .collect();
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn single_row_matrix() {
+        // a single bracketed row with more than one column is still a matrix (total cells > 1)
+        let expr = super::parse("[[a, b]]");
+        let expected = [Matrix::new(
+            "[",
+            [
+                [Simple::Ident("a")].into_iter().collect(),
+                [Simple::Ident("b")].into_iter().collect(),
+            ],
+            2,
+            "]",
+        )]
+        .into_iter()
+        .collect();
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn matrix_candidate_with_trailing_tokens_is_group() {
+        // a row followed by a non-separator token can't be a matrix, so it stays a group
+        let expr = super::parse("[[a] b]");
+        let expected = [Group::from_iter(
+            "[",
+            [
+                Group::from_iter("[", [Simple::Ident("a")], "]").into(),
+                Simple::Ident("b"),
+            ],
+            "]",
+        )]
+        .into_iter()
+        .collect();
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn matrix_row_with_bar() {
+        // a "|" inside a matrix row is just a symbol in that cell; the rows still parse as a matrix
+        let expr = super::parse("[[a|b],[c|d]]");
+        let expected = [Matrix::new(
+            "[",
+            [
+                [Simple::Ident("a"), Simple::Symbol("|"), Simple::Ident("b")]
+                    .into_iter()
+                    .collect(),
+                [Simple::Ident("c"), Simple::Symbol("|"), Simple::Ident("d")]
+                    .into_iter()
+                    .collect(),
+            ],
+            1,
             "]",
         )]
         .into_iter()
