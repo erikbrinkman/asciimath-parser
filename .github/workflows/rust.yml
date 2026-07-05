@@ -33,6 +33,8 @@ jobs:
       run: cargo llvm-cov --verbose --all-features --fail-under-lines 95
     - name: Run benches
       run: cargo +nightly bench --verbose
+    - name: Check docs
+      run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
     - name: Run lints
       run: cargo clippy --verbose --all-features -- -D warnings
     - name: Run bench lints
