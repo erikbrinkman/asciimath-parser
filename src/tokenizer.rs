@@ -237,19 +237,24 @@ where
                 (raw, Token::Ident)
             })
         } else {
+            // one ident per run of unmatched chars; only break where a token/number/text starts, so
+            // a non-decimal '.' or unclosed '"' stays in the run rather than ending it
             let len = self
                 .remaining
                 .char_indices()
                 .find(|&(i, c)| {
-                    // NOTE using the strip would be guaranteed to be correct, but less efficient
-                    matches!(c, '.' | '"' | '0'..='9')
-                        || c.is_whitespace()
+                    let rest = &self.remaining[i..];
+                    c.is_whitespace()
+                        || c.is_ascii_digit()
+                        || (c == '.' && strip_number(rest).is_some())
+                        || (c == '"' && strip_text(rest).is_some())
                         || self
                             .token_map
-                            .get_longest_prefix(&self.remaining[i..])
-                            .is_some_and(|(i, _)| i > 0)
+                            .get_longest_prefix(rest)
+                            .is_some_and(|(len, _)| len > 0)
                 })
                 .map_or(self.remaining.len(), |(i, _)| i);
+            // len == 0 only at end of input, since nothing matches at the current position
             if len == 0 {
                 None
             } else {
@@ -348,6 +353,24 @@ mod tests {
                 ("text with spaces", Token::Text),
             ]
         );
+    }
+
+    #[test]
+    fn str_tokenizer_absorbs_stray_dot_and_unterminated_text() {
+        let token_map = HashPrefixMap::from_iter(ASCIIMATH_TOKENS);
+
+        let dotted: Vec<_> = Tokenizer::with_tokens("a.b + c", &token_map, false).collect();
+        assert_eq!(
+            *dotted,
+            [
+                ("a.b", Token::Ident),
+                ("+", Token::Ident),
+                ("c", Token::Ident),
+            ]
+        );
+
+        let unterm: Vec<_> = Tokenizer::with_tokens(r#"x "unterm"#, &token_map, false).collect();
+        assert_eq!(*unterm, [("x", Token::Ident), ("\"unterm", Token::Ident)]);
     }
 
     #[test]
