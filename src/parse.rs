@@ -387,11 +387,7 @@ mod tests {
     #[test]
     fn double_open_close() {
         let expr = super::parse("||x||");
-        let expected = Expression::from_iter([Group::from_iter(
-            "|",
-            [Group::from_iter("|", [Simple::Ident("x")], "|")],
-            "|",
-        )]);
+        let expected = Expression::from_iter([Group::from_iter("||", [Simple::Ident("x")], "||")]);
         assert_eq!(expr, expected);
     }
 
