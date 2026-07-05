@@ -180,12 +180,13 @@ impl<'a> Matrix<'a> {
     /// columns exist in the final matrix.
     ///
     /// # Panics
-    /// When `cells.into().len()` is not divisible by `num_cols`.
+    /// When `num_cols` is zero, or when `cells.into().len()` is not divisible by `num_cols`.
     pub fn new<E>(left_bracket: &'a str, cells: E, num_cols: usize, right_bracket: &'a str) -> Self
     where
         E: Into<Box<[Expression<'a>]>>,
     {
         let cells = cells.into();
+        assert!(num_cols > 0, "num_cols must be positive");
         assert_eq!(cells.len() / num_cols * num_cols, cells.len());
         Matrix {
             left_bracket,
@@ -204,6 +205,7 @@ impl<'a> Matrix<'a> {
     /// The number of rows
     #[must_use]
     pub fn num_rows(&self) -> usize {
+        // num_cols is guaranteed positive by `Matrix::new`, so this never divides by zero
         self.cells.len() / self.num_cols
     }
 
@@ -776,6 +778,12 @@ mod tests {
     #[should_panic(expected = "assertion")]
     fn matrix_ragged() {
         let _ = Matrix::new("[", [cell("a"), cell("b"), cell("c")], 2, "]");
+    }
+
+    #[test]
+    #[should_panic(expected = "num_cols must be positive")]
+    fn matrix_zero_cols() {
+        let _ = Matrix::new("[", [], 0, "]");
     }
 
     #[test]
