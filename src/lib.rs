@@ -1,7 +1,7 @@
 //! A fast extensible memory-efficient asciimath parser
 //!
 //! This parser produces a parsed tree representation rooted as an
-//! [`Expression`][tree::Expression]. The parsed structure keeps refrences to the underlying string
+//! [`Expression`][tree::Expression]. The parsed structure keeps references to the underlying string
 //! in order to avoid copies, but these strings must still be interpreted as the correct tokens to
 //! use the structure.
 //!
@@ -17,20 +17,17 @@
 //! asciimath_parser::parse("x / y");
 //! ```
 //!
-//! ### Comparisons
+//! ### Performance
 //!
-//! This library is meant to be a fast extensible parser. There are a number of rust libraries that
-//! parse and format, or parse and evaluate, but don't expose their underlying parsing logic. Only
-//! `asciimath_rs` actual parses expressions. However, that parser allocates extra strings, and
-//! produces a relatively complicated parse tree. This creates a relatively simpler parse tree with
-//! string slices as tokens. This allows this parser be several times faster than `asciimath_rs`.
+//! This library is meant to be a fast extensible parser. Most other rust libraries parse and
+//! format, or parse and evaluate, but don't expose their underlying parsing logic. This parser
+//! produces a relatively simple parse tree whose tokens are slices of the input, so it does no
+//! extra string allocation. The `parse` bench measures parsing a corpus of hand-written examples
+//! and a batch of random expressions:
 //!
 //! ```txt
-//! test asciimath_parser::example ... bench:       7,912 ns/iter (+/- 1,348)
-//! test asciimath_rs::example     ... bench:      41,605 ns/iter (+/- 14,262)
-//!
-//! test asciimath_parser::random  ... bench:     360,495 ns/iter (+/- 32,231)
-//! test asciimath_rs::random      ... bench:   2,522,810 ns/iter (+/- 168,133)
+//! test example ... bench:       2,232 ns/iter (+/- 115)
+//! test random  ... bench:     113,775 ns/iter (+/- 6,033)
 //! ```
 //!
 //! ## Dialect
@@ -42,7 +39,7 @@
 //!
 //! The parsing is written manually, so it doesn't quite conform to this grammar, (which is also
 //! very ambiguous), but this grammar is close to the way asciimath actually interprets strings. In
-//! asciimath, left-right brackets have the highest precidence and almost any argument can be
+//! asciimath, left-right brackets have the highest precedence and almost any argument can be
 //! [missing][tree::Simple::Missing], save the first.
 //!
 //! ```txt
@@ -56,15 +53,15 @@
 //! R ::= E | E,R                              Matrix row expression
 //! M ::= lRr | lRr,M                          Matrix expression
 //! S ::= v | lEr | uS | fS | bSS | dEd | lMr  Simple expression
-//! P ::= _S | ^S | _S^S                       Power expressiong
+//! P ::= _S | ^S | _S^S                       Power expression
 //! I ::= fP?I | SP?                           Intermediate expression
 //! E ::= IE | I/I                             Expression
 //! ```
 //!
 //! Left-right brackets are closed greedily, and must match the same string on both sides. If they
-//! can't be matched they'll be parsed as a symbol. This is particularly useful for probabilitiy
+//! can't be matched they'll be parsed as a symbol. This is particularly useful for probability
 //! conditioning, e.g. "p(x|y)". For matrices, all left brackets must match, all right brackets
-//! must match, the number of seperators (,) in each row must match, and there needs to be more
+//! must match, the number of separators (,) in each row must match, and there needs to be more
 //! than one element. This is more narrow than asciimath, but prevents need to have hardcoded rules
 //! for the difference between a set and a matrix.
 //!
@@ -80,7 +77,7 @@
 //! handle expressions like ||x||. This library tokenizes "||" as one token and tries to match it
 //! that way, which produces different results than asciimath. Additionally, asciimath will
 //! sometimes put a phantom empty open brace if an expression ends on a "|". This proved difficult
-//! to support and seemes like an unuseful edgecase as it could always be substituted with
+//! to support and seems like an unuseful edgecase as it could always be substituted with
 //! "{: ...  :|".
 //!
 //! ### Extensions to Asciimath
@@ -89,8 +86,8 @@
 //! they can be tweaked.
 //!
 //! 1. [`parse`][crate::parse()] uses the default tokenizer, but
-//!    [`parse_tokens`][crate::parse_tokens] can be used to parse an iterator of tuples `(&str,
-//!    Token)` for ant custom tokenization you write.
+//!    [`parse_tokens`] can be used to parse an iterator of tuples `(&str,
+//!    Token)` for any custom tokenization you write.
 //! 2. Custom tokenizer options can be used by creating an alternate [`Tokenizer`] using
 //!    [`with_tokens`][Tokenizer::with_tokens].
 //!    ```
@@ -142,8 +139,8 @@
 //! exceptions to this hierarchy are [`Group`][tree::Group] and [`Matrix`][tree::Matrix] that are
 //! both "simple" structures, but contain nested expressions. All of these types implement `From`
 //! from their singleton children, allowing promoting simple types to more complex ones with
-//! minimal overhead. All of their members are public allowing destrucutring, especially with the
-//! `box_patterns` feature. See [`tree`][crate::tree] for more details.
+//! minimal overhead. All of their members are public allowing destructuring, especially with the
+//! `box_patterns` feature. See [`tree`] for more details.
 //!
 //! ```
 //! use asciimath_parser::tree::{Expression, Simple};
