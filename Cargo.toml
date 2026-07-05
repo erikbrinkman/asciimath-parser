@@ -18,5 +18,4 @@ fst = { version = "0.4", optional = true }
 qp-trie = { version = "0.8", optional = true }
 
 [dev-dependencies]
-asciimath-rs = "0.6"
 rand = "0.10"
