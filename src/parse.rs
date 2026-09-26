@@ -202,10 +202,15 @@ impl<'a> Parser<'a> {
         } else if let Some(first) = self.next_intermediate(None) {
             // take the first intermediate, even if it's another OpenCloseBracket
             let mut inters = vec![first];
-            while let Some(inter) = self.next_intermediate(Some(Token::OpenCloseBracket)) {
+            // any other left-right bracket, e.g. "|" inside "||", opens its own group
+            while !self.at_open_close(open)
+                && let Some(inter) = self.next_intermediate(None)
+            {
                 inters.push(inter);
             }
-            if let Some((close, Token::OpenCloseBracket)) = self.advance() {
+            if self.at_open_close(open)
+                && let Some((close, _)) = self.advance()
+            {
                 Simple::Group(Group::new(open, inters, close))
             } else {
                 // couldn't match the left-right bracket, so rewind and treat it as a symbol
@@ -217,6 +222,13 @@ impl<'a> Parser<'a> {
             // empty so must return symbol
             Simple::Symbol(open)
         }
+    }
+
+    /// Whether the next token is the left-right bracket `bracket`.
+    fn at_open_close(&self, bracket: &str) -> bool {
+        self.entries
+            .get(self.pos)
+            .is_some_and(|entry| entry.token == Token::OpenCloseBracket && entry.text == bracket)
     }
 
     fn next_expression(&mut self, stop: Option<Token>) -> Expression<'a> {
@@ -515,6 +527,32 @@ mod tests {
     fn double_open_close() {
         let expr = super::parse("||x||");
         let expected = Expression::from_iter([Group::from_iter("||", [Simple::Ident("x")], "||")]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn open_close_closes_on_same_bracket() {
+        let expr = super::parse("||a| + |b||");
+        let expected = Expression::from_iter([Group::from_iter(
+            "||",
+            [
+                Simple::Ident("a"),
+                Group::from_iter("|", [Simple::Ident("+")], "|").into(),
+                Simple::Ident("b"),
+            ],
+            "||",
+        )]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn open_close_mismatched_is_symbol() {
+        let expr = super::parse("|a||");
+        let expected = Expression::from_iter([
+            Simple::Symbol("|"),
+            Simple::Ident("a"),
+            Simple::Symbol("||"),
+        ]);
         assert_eq!(expr, expected);
     }
 
