@@ -53,10 +53,15 @@
 //! R ::= E | E,R                              Matrix row expression
 //! M ::= lRr | lRr,M                          Matrix expression
 //! S ::= v | lEr | uS | fS | bSS | dEd | lMr  Simple expression
-//! P ::= _S | ^S | _S^S                       Power expression
+//! N ::= S | -S                               Negatable simple expression
+//! P ::= _N | ^N | _N^N                       Power expression
 //! I ::= fP?I | SP?                           Intermediate expression
-//! E ::= IE | I/I                             Expression
+//! E ::= IE | I/I | I/NP?                     Expression
 //! ```
+//!
+//! As in asciimath, a `-` directly after `^`, `_`, or `/` is a prefix of the next simple
+//! expression, so `x^-1` has the superscript `-1`, and is parsed as a [`Group`][tree::Group] with
+//! empty brackets containing the `-` and the simple expression. Elsewhere `-` is its own token.
 //!
 //! Left-right brackets are closed greedily, and must match the same string on both sides. If they
 //! can't be matched they'll be parsed as a symbol. This is particularly useful for probability
