@@ -54,7 +54,7 @@ macro_rules! tokens {
 ///
 /// This a a constant exported to enable easily alternate parsing, or verification of string
 /// slices.
-pub const ASCIIMATH_TOKENS: [(&str, Token); 352] = tokens!(
+pub const ASCIIMATH_TOKENS: [(&str, Token); 386] = tokens!(
     Frac => "/";
     Super => "^";
     Sub => "_";
@@ -62,13 +62,14 @@ pub const ASCIIMATH_TOKENS: [(&str, Token); 352] = tokens!(
     Function => "sin", "cos", "tan", "sinh", "cosh", "tanh", "cot", "sec", "csc", "arcsin",
         "arccos", "arctan", "coth", "sech", "csch", "exp", "log", "ln", "det", "gcd", "lcm", "Sin",
         "Cos", "Tan", "Arcsin", "Arccos", "Arctan", "Sinh", "Cosh", "Tanh", "Cot", "Sec", "Csc",
-        "Log", "Ln", "f", "g";
+        "Log", "Ln", "f", "g", "arcsec", "arccsc", "arccot";
     Unary => "sqrt", "abs", "norm", "floor", "ceil", "Abs", "hat", "bar", "overline", "vec", "dot",
         "ddot", "overarc", "overparen", "ul", "underline", "ubrace", "underbrace", "obrace",
         "overbrace", "text", "mbox", "cancel", "tilde";
     // font commands
     Unary => "bb", "mathbf", "sf", "mathsf", "bbb", "mathbb", "cc", "mathcal", "tt", "mathtt",
-        "fr", "mathfrak";
+        "fr", "mathfrak", "mathit", "italic", "bold", "bbit", "bbsf", "sfit", "bbsfit", "bbcc",
+        "bbfr";
     Binary => "frac", "root", "stackrel", "overset", "underset", "color", "id", "class";
     // greek symbols
     Symbol => "alpha", "beta", "chi", "delta", "Delta", "epsi", "epsilon", "varepsilon", "eta",
@@ -80,13 +81,14 @@ pub const ASCIIMATH_TOKENS: [(&str, Token); 352] = tokens!(
         "times", "|><", "ltimes", "><|", "rtimes", "|><|", "bowtie", "-:", "div", "divide", "@",
         "circ", "o+", "oplus", "ox", "otimes", "o.", "odot", "sum", "prod", "^^", "wedge", "^^^",
         "bigwedge", "vv", "vee", "vvv", "bigvee", "nn", "cap", "nnn", "bigcap", "uu", "cup", "uuu",
-        "bigcup";
+        "bigcup", "o-", "ominus", "dag", "dagger", "ddag", "ddagger";
     // relations
     Symbol => "=", "!=", "ne", ":=", "<", "lt", "<=", "le", "lt=", "leq", ">", "gt", "mlt", "ll",
         ">=", "ge", "gt=", "geq", "mgt", "gg", "-<", "prec", "-lt", ">-", "succ", "-<=", "preceq",
         ">-=", "succeq", "in", "!in", "notin", "sub", "subset", "sup", "supset", "sube",
-        "subseteq", "supe", "supseteq", "-=", "equiv", "~=", "cong", "~~", "aprox", "~", "sim",
-        "prop", "propto";
+        "subseteq", "supe", "supseteq", "!sub", "notsubset", "!sube", "notsubseteq", "!sup",
+        "notsupset", "!supe", "notsupseteq", "-=", "equiv", "!-=", "notequiv", "~=", "cong", "~~",
+        "approx", "~", "sim", "prop", "propto";
     // logical
     Symbol => "and", "or", "not", "neg", "=>", "implies", "if", "<=>", "iff", "AA", "forall", "EE",
         "exists", "_|_", "bot", "TT", "top", "|--", "vdash", "|==", "models";
@@ -95,14 +97,15 @@ pub const ASCIIMATH_TOKENS: [(&str, Token); 352] = tokens!(
         "O/", "emptyset", "oo", "infty", "aleph", "...", "ldots", ":.", "therefore", ":'",
         "because", "/_", "angle", "/_\\", "triangle", "'", "prime", "\\ ", "frown", "quad",
         "qquad", "cdots", "vdots", "ddots", "diamond", "square", "|__", "lfloor", "__|", "rfloor",
-        "|~", "lceiling", "~|", "rceiling", "CC", "NN", "QQ", "RR", "ZZ";
+        "|~", "lceiling", "~|", "rceiling", "CC", "NN", "QQ", "RR", "ZZ", "hbar", "enspace",
+        "thinspace";
     // underover
     Symbol => "lim", "Lim", "dim", "mod", "lub", "glb", "min", "max";
     // arrows
     Symbol => "uarr", "uparrow", "darr", "downarrow", "rarr", "rightarrow", "->", "to", ">->",
         "rightarrowtail", "->>", "twoheadrightarrow", ">->>", "twoheadrightarrowtail", "|->",
         "mapsto", "larr", "leftarrow", "harr", "leftrightarrow", "rArr", "Rightarrow", "lArr",
-        "Leftarrow", "hArr", "Leftrightarrow";
+        "Leftarrow", "hArr", "Leftrightarrow", "dArr", "Downarrow", "rightleftharpoons";
     // brackets
     OpenBracket => "(", "[", "{", "|:", "(:", "<<", "langle", "left(", "left[", "{:";
     CloseBracket => ")", "]", "}", ":|", ":)", ">>", "rangle", "right)", "right]", ":}";
@@ -371,6 +374,26 @@ mod tests {
 
         let unterm: Vec<_> = Tokenizer::with_tokens(r#"x "unterm"#, &token_map, false).collect();
         assert_eq!(*unterm, [("x", Token::Ident), ("\"unterm", Token::Ident)]);
+    }
+
+    #[test]
+    fn asciimath_symbols() {
+        let tokens: Vec<_> = Tokenizer::new("x ~~ y !sube o- arcsec bbsfit dArr").collect();
+        assert_eq!(
+            *tokens,
+            [
+                ("x", Token::Ident),
+                ("~~", Token::Symbol),
+                ("y", Token::Ident),
+                ("!sube", Token::Symbol),
+                ("o-", Token::Symbol),
+                ("arcsec", Token::Function),
+                ("bbsfit", Token::Unary),
+                ("dArr", Token::Symbol),
+            ]
+        );
+        assert!(ASCIIMATH_TOKENS.iter().any(|&(name, _)| name == "approx"));
+        assert!(!ASCIIMATH_TOKENS.iter().any(|&(name, _)| name == "aprox"));
     }
 
     #[test]
