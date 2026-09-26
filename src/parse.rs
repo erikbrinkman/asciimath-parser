@@ -282,15 +282,43 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse a `-` prefixing the following simple into an unbracketed group.
+    ///
+    /// Following asciimath, only called right after `^`, `_`, or `/`, so `x^-1` scripts `-1`
+    /// while `a-1` stays a subtraction. Returns `None` without consuming if the next token isn't
+    /// `-`, and just the `-` if nothing follows it.
+    fn next_negated(&mut self) -> Option<Simple<'a>> {
+        let mark = self.pos;
+        let minus = match self.advance() {
+            Some((minus @ "-", Token::Ident)) => Simple::Ident(minus),
+            Some((minus @ "-", Token::Symbol)) => Simple::Symbol(minus),
+            _ => {
+                self.pos = mark; // rewind
+                return None;
+            }
+        };
+        match self.next_simple(None) {
+            Some(operand) => Some(Group::from_iter("", [minus, operand], "").into()),
+            None => Some(minus),
+        }
+    }
+
+    /// The argument of a sub- or superscript.
+    fn next_script_arg(&mut self) -> Simple<'a> {
+        self.next_negated()
+            .or_else(|| self.next_simple(None))
+            .unwrap_or_default()
+    }
+
     fn next_script(&mut self) -> Script<'a> {
         let mark = self.pos;
         match self.advance() {
-            Some((_, Token::Super)) => Script::Super(self.next_simple(None).unwrap_or_default()),
+            Some((_, Token::Super)) => Script::Super(self.next_script_arg()),
             Some((_, Token::Sub)) => {
-                let sub = self.next_simple(None).unwrap_or_default();
+                let sub = self.next_script_arg();
                 let mark = self.pos;
                 if let Some((_, Token::Super)) = self.advance() {
-                    Script::Subsuper(sub, self.next_simple(None).unwrap_or_default())
+                    Script::Subsuper(sub, self.next_script_arg())
                 } else {
                     self.pos = mark; // rewind
                     Script::Sub(sub)
@@ -331,10 +359,11 @@ impl<'a> Parser<'a> {
         let base = self.next_script_func(stop)?;
         let mark = self.pos;
         if let Some((_, Token::Frac)) = self.advance() {
-            Some(Intermediate::Frac(Frac::new(
-                base,
-                self.next_script_func(None).unwrap_or_default(),
-            )))
+            let denominator = match self.next_negated() {
+                Some(negated) => SimpleScript::new(negated, self.next_script()).into(),
+                None => self.next_script_func(None).unwrap_or_default(),
+            };
+            Some(Intermediate::Frac(Frac::new(base, denominator)))
         } else {
             self.pos = mark; // rewind
             Some(Intermediate::ScriptFunc(base))
@@ -553,6 +582,68 @@ mod tests {
             Simple::Ident("a"),
             Simple::Symbol("||"),
         ]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn negated_scripts() {
+        let negated = |operand| Group::from_iter("", [Simple::Ident("-"), operand], "");
+        let expr = super::parse("x^-1 e^-x y_-1^-2");
+        let expected = Expression::from_iter([
+            SimpleScript::with_super(Simple::Ident("x"), negated(Simple::Number("1"))),
+            SimpleScript::with_super(Simple::Ident("e"), negated(Simple::Ident("x"))),
+            SimpleScript::with_subsuper(
+                Simple::Ident("y"),
+                negated(Simple::Number("1")),
+                negated(Simple::Number("2")),
+            ),
+        ]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn negated_function_script() {
+        let expr = super::parse("sin^-1 x");
+        let expected = Expression::from_iter([Func::with_super(
+            "sin",
+            Group::from_iter("", [Simple::Ident("-"), Simple::Number("1")], ""),
+            Simple::Ident("x"),
+        )]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn negated_denominator() {
+        let expr = super::parse("1/-2^3");
+        let expected = Expression::from_iter([Frac::new(
+            Simple::Number("1"),
+            SimpleScript::with_super(
+                Group::from_iter("", [Simple::Ident("-"), Simple::Number("2")], ""),
+                Simple::Number("3"),
+            ),
+        )]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn lone_minus_script() {
+        let expr = super::parse("(x^-)");
+        let expected = Expression::from_iter([Group::from_iter(
+            "(",
+            [SimpleScript::with_super(
+                Simple::Ident("x"),
+                Simple::Ident("-"),
+            )],
+            ")",
+        )]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn binary_minus_unchanged() {
+        let expr = super::parse("a-1");
+        let expected =
+            Expression::from_iter([Simple::Ident("a"), Simple::Ident("-"), Simple::Number("1")]);
         assert_eq!(expr, expected);
     }
 

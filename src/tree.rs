@@ -117,7 +117,8 @@ impl<'a> SimpleBinary<'a> {
 /// A bracketd group that allows inserting complicated expressions in simplex contexts
 ///
 /// In some instances a bracket won't be parsed to close a group out, in that case the bracket will
-/// be the empty string.
+/// be the empty string. A `-` prefixing a script or denominator, e.g. `x^-1`, is a group with both
+/// brackets empty.
 pub struct Group<'a> {
     /// The left bracket
     pub left_bracket: &'a str,
