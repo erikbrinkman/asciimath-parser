@@ -3,6 +3,7 @@ use crate::tree::{
     SimpleFunc, SimpleScript, SimpleUnary,
 };
 use crate::{Token, Tokenizer};
+use std::collections::HashSet;
 
 /// The maximum recursion depth before deeper structure is treated as [missing][Simple::Missing].
 ///
@@ -29,6 +30,12 @@ struct Parser<'a> {
     pos: usize,
     /// Current recursion depth, bounded by [`MAX_DEPTH`].
     depth: usize,
+    /// Indices of open brackets whose `|` group or matrix parse already failed.
+    ///
+    /// A failed attempt rewinds and is retried every time an enclosing attempt fails, which is
+    /// exponential in nesting. The outcome from a position doesn't depend on the caller, except
+    /// through the depth cap, so a failure is never retried.
+    failed_opens: HashSet<usize>,
 }
 
 impl<'a> Parser<'a> {
@@ -65,6 +72,7 @@ impl<'a> Parser<'a> {
             entries: entries.into(),
             pos: 0,
             depth: 0,
+            failed_opens: HashSet::new(),
         }
     }
 
@@ -115,13 +123,16 @@ impl<'a> Parser<'a> {
             }
             Some((open, Token::OpenBracket)) => Some({
                 // gate the matrix parse on the precompute; done unconditionally it's exponential
-                let matrix = self.could_be_matrix().then(|| {
-                    let mark = self.pos;
-                    self.next_matrix(open).or_else(|| {
-                        self.pos = mark; // rewind before the failed matrix attempt
-                        None
-                    })
-                });
+                let open_index = mark;
+                let matrix = (self.could_be_matrix() && !self.failed_opens.contains(&open_index))
+                    .then(|| {
+                        let mark = self.pos;
+                        self.next_matrix(open).or_else(|| {
+                            self.pos = mark; // rewind before the failed matrix attempt
+                            self.failed_opens.insert(open_index);
+                            None
+                        })
+                    });
                 match matrix {
                     Some(Some(matrix)) => matrix.into(),
                     _ => self.next_open_group(open).into(),
@@ -185,7 +196,10 @@ impl<'a> Parser<'a> {
 
     fn next_open_close_group(&mut self, open: &'a str) -> Simple<'a> {
         let mark = self.pos;
-        if let Some(first) = self.next_intermediate(None) {
+        let open_index = mark - 1;
+        if self.failed_opens.contains(&open_index) {
+            Simple::Symbol(open)
+        } else if let Some(first) = self.next_intermediate(None) {
             // take the first intermediate, even if it's another OpenCloseBracket
             let mut inters = vec![first];
             while let Some(inter) = self.next_intermediate(Some(Token::OpenCloseBracket)) {
@@ -196,6 +210,7 @@ impl<'a> Parser<'a> {
             } else {
                 // couldn't match the left-right bracket, so rewind and treat it as a symbol
                 self.pos = mark; // rewind
+                self.failed_opens.insert(open_index);
                 Simple::Symbol(open)
             }
         } else {
@@ -663,6 +678,26 @@ mod tests {
         let input = format!("{}a{}", "(".repeat(depth), ")".repeat(depth));
         let expr = super::parse(&input);
         assert_eq!(expr.len(), 1);
+    }
+
+    #[test]
+    fn failed_brackets_are_not_exponential() {
+        // each unclosed "|" used to be retried whenever an enclosing attempt failed, doubling per
+        // nesting level; nested failed matrices did the same
+        let start = std::time::Instant::now();
+        for unit in ["|(", "(|", "|sqrt(", "|x_(", "[[a,b],[c]],"] {
+            let input = unit.repeat(200);
+            let expr = super::parse(&input);
+            assert!(!expr.is_empty());
+        }
+        let nested_matrix =
+            (0..200).fold(String::from("a"), |inner, _| format!("[[{inner},a],[b]]"));
+        assert!(!super::parse(&nested_matrix).is_empty());
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(1),
+            "took {:?}",
+            start.elapsed()
+        );
     }
 
     #[test]
