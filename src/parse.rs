@@ -102,6 +102,7 @@ impl<'a> Parser<'a> {
             Some((num, Token::Number)) => Some(Simple::Number(num)),
             Some((text, Token::Text)) => Some(Simple::Text(text)),
             Some((ident, Token::Ident)) => Some(Simple::Ident(ident)),
+            Some((operator, Token::Operator)) => Some(Simple::Operator(operator)),
             Some((symb, Token::Symbol)) => Some(Simple::Symbol(symb)),
             Some((unary, Token::Unary)) => {
                 Some(SimpleUnary::new(unary, self.next_simple(None).unwrap_or_default()).into())
@@ -290,7 +291,7 @@ impl<'a> Parser<'a> {
     fn next_negated(&mut self) -> Option<Simple<'a>> {
         let mark = self.pos;
         let minus = match self.advance() {
-            Some((minus @ "-", Token::Ident)) => Simple::Ident(minus),
+            Some((minus @ "-", Token::Operator)) => Simple::Operator(minus),
             Some((minus @ "-", Token::Symbol)) => Simple::Symbol(minus),
             _ => {
                 self.pos = mark; // rewind
@@ -566,7 +567,7 @@ mod tests {
             "||",
             [
                 Simple::Ident("a"),
-                Group::from_iter("|", [Simple::Ident("+")], "|").into(),
+                Group::from_iter("|", [Simple::Operator("+")], "|").into(),
                 Simple::Ident("b"),
             ],
             "||",
@@ -587,7 +588,7 @@ mod tests {
 
     #[test]
     fn negated_scripts() {
-        let negated = |operand| Group::from_iter("", [Simple::Ident("-"), operand], "");
+        let negated = |operand| Group::from_iter("", [Simple::Operator("-"), operand], "");
         let expr = super::parse("x^-1 e^-x y_-1^-2");
         let expected = Expression::from_iter([
             SimpleScript::with_super(Simple::Ident("x"), negated(Simple::Number("1"))),
@@ -606,7 +607,7 @@ mod tests {
         let expr = super::parse("sin^-1 x");
         let expected = Expression::from_iter([Func::with_super(
             "sin",
-            Group::from_iter("", [Simple::Ident("-"), Simple::Number("1")], ""),
+            Group::from_iter("", [Simple::Operator("-"), Simple::Number("1")], ""),
             Simple::Ident("x"),
         )]);
         assert_eq!(expr, expected);
@@ -618,7 +619,7 @@ mod tests {
         let expected = Expression::from_iter([Frac::new(
             Simple::Number("1"),
             SimpleScript::with_super(
-                Group::from_iter("", [Simple::Ident("-"), Simple::Number("2")], ""),
+                Group::from_iter("", [Simple::Operator("-"), Simple::Number("2")], ""),
                 Simple::Number("3"),
             ),
         )]);
@@ -632,7 +633,7 @@ mod tests {
             "(",
             [SimpleScript::with_super(
                 Simple::Ident("x"),
-                Simple::Ident("-"),
+                Simple::Operator("-"),
             )],
             ")",
         )]);
@@ -642,8 +643,11 @@ mod tests {
     #[test]
     fn binary_minus_unchanged() {
         let expr = super::parse("a-1");
-        let expected =
-            Expression::from_iter([Simple::Ident("a"), Simple::Ident("-"), Simple::Number("1")]);
+        let expected = Expression::from_iter([
+            Simple::Ident("a"),
+            Simple::Operator("-"),
+            Simple::Number("1"),
+        ]);
         assert_eq!(expr, expected);
     }
 
