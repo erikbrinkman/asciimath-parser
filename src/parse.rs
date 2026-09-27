@@ -11,6 +11,9 @@ use std::collections::HashSet;
 /// `"sqrt ".repeat(100_000)` would overflow the stack and abort the process.
 const MAX_DEPTH: usize = 256;
 
+/// The bracket pairs that can surround a matrix row.
+const MATRIX_ROW_BRACKETS: [(&str, &str); 2] = [("(", ")"), ("[", "]")];
+
 /// A token paired with the bracket-matching info precomputed for its position.
 struct Entry<'a> {
     text: &'a str,
@@ -30,12 +33,14 @@ struct Parser<'a> {
     pos: usize,
     /// Current recursion depth, bounded by [`MAX_DEPTH`].
     depth: usize,
-    /// Indices of open brackets whose `|` group or matrix parse already failed.
+    /// Indices of `|` brackets, with the stop token, whose group parse already failed.
     ///
     /// A failed attempt rewinds and is retried every time an enclosing attempt fails, which is
-    /// exponential in nesting. The outcome from a position doesn't depend on the caller, except
-    /// through the depth cap, so a failure is never retried.
-    failed_opens: HashSet<usize>,
+    /// exponential in nesting. The outcome from a position depends on the caller only through the
+    /// stop token and the depth cap, so a failure is never retried.
+    failed_opens: HashSet<(usize, Option<Token>)>,
+    /// Indices of open brackets whose matrix parse already failed, for the same reason.
+    failed_matrices: HashSet<usize>,
 }
 
 impl<'a> Parser<'a> {
@@ -73,6 +78,7 @@ impl<'a> Parser<'a> {
             pos: 0,
             depth: 0,
             failed_opens: HashSet::new(),
+            failed_matrices: HashSet::new(),
         }
     }
 
@@ -122,24 +128,11 @@ impl<'a> Parser<'a> {
                 self.pos = mark; // rewind; always stop on close bracket
                 None
             }
-            Some((open, Token::OpenBracket)) => Some({
-                // gate the matrix parse on the precompute; done unconditionally it's exponential
-                let open_index = mark;
-                let matrix = (self.could_be_matrix() && !self.failed_opens.contains(&open_index))
-                    .then(|| {
-                        let mark = self.pos;
-                        self.next_matrix(open).or_else(|| {
-                            self.pos = mark; // rewind before the failed matrix attempt
-                            self.failed_opens.insert(open_index);
-                            None
-                        })
-                    });
-                match matrix {
-                    Some(Some(matrix)) => matrix.into(),
-                    _ => self.next_open_group(open).into(),
-                }
+            Some((open, Token::OpenBracket)) => Some(match self.try_matrix(open) {
+                Some(matrix) => matrix.into(),
+                None => self.next_open_group(open).into(),
             }),
-            Some((open, Token::OpenCloseBracket)) => Some(self.next_open_close_group(open)),
+            Some((open, Token::OpenCloseBracket)) => Some(self.next_open_close_group(open, stop)),
             Some((raw, Token::Frac | Token::Super | Token::Sub | Token::Sep)) => {
                 Some(Simple::Symbol(raw))
             }
@@ -149,10 +142,34 @@ impl<'a> Parser<'a> {
         result
     }
 
+    /// Parse a matrix after the just-consumed open bracket, or rewind and return `None`.
+    fn try_matrix(&mut self, left: &'a str) -> Option<Matrix<'a>> {
+        // gate the matrix parse on the precompute; done unconditionally it's exponential
+        let open_index = self.pos - 1;
+        if self.failed_matrices.contains(&open_index) || !self.could_be_matrix() {
+            return None;
+        }
+        let mark = self.pos;
+        let matrix = self.next_matrix_rows().and_then(|(open, data, num_cols)| {
+            // as in asciimath, rows of "(" in "{...}" are a set of tuples
+            let is_set = open == "(" && self.entries[self.pos].text == "}";
+            let (cells, num_cols, column_lines) = split_column_lines(data, num_cols);
+            (!is_set && cells.len() > 1 && self.closes(open_index, self.pos)).then(|| {
+                let (right, _) = self.advance().expect("outer close");
+                Matrix::new(left, cells, num_cols, right).with_column_lines(column_lines)
+            })
+        });
+        if matrix.is_none() {
+            self.pos = mark; // rewind before the failed matrix attempt
+            self.failed_matrices.insert(open_index);
+        }
+        matrix
+    }
+
     /// Whether the just-consumed open bracket (at `self.pos - 1`) begins a matrix.
     ///
-    /// O(1) via the precomputed tables; only returns `false` when [`next_matrix`][Self::next_matrix]
-    /// would certainly fail, so results are unchanged.
+    /// O(1) via the precomputed tables; only returns `false` when
+    /// [`next_matrix_rows`][Self::next_matrix_rows] would certainly fail, so results are unchanged.
     fn could_be_matrix(&self) -> bool {
         let outer_open = self.pos - 1;
         let row_open = self.pos;
@@ -175,7 +192,7 @@ impl<'a> Parser<'a> {
             .is_some_and(|entry| entry.token == Token::Sep)
         {
             true // a separator implies a second row
-        } else if after == self.entries[outer_open].close {
+        } else if self.closes(outer_open, after) {
             self.entries[row_open].has_sep // single row: a matrix only with more than one column
         } else {
             false
@@ -195,17 +212,22 @@ impl<'a> Parser<'a> {
         Group::new(open, expr, close)
     }
 
-    fn next_open_close_group(&mut self, open: &'a str) -> Simple<'a> {
+    /// Parse a left-right group, which, like its caller, won't extend past `stop`.
+    ///
+    /// Matrix cells stop at separators, so a `|` cell can't pair with a `|` in a later cell.
+    fn next_open_close_group(&mut self, open: &'a str, stop: Option<Token>) -> Simple<'a> {
         let mark = self.pos;
         let open_index = mark - 1;
-        if self.failed_opens.contains(&open_index) {
+        if let Some(matrix) = self.try_matrix(open) {
+            matrix.into()
+        } else if self.failed_opens.contains(&(open_index, stop)) {
             Simple::Symbol(open)
-        } else if let Some(first) = self.next_intermediate(None) {
+        } else if let Some(first) = self.next_intermediate(stop) {
             // take the first intermediate, even if it's another OpenCloseBracket
             let mut inters = vec![first];
             // any other left-right bracket, e.g. "|" inside "||", opens its own group
             while !self.at_open_close(open)
-                && let Some(inter) = self.next_intermediate(None)
+                && let Some(inter) = self.next_intermediate(stop)
             {
                 inters.push(inter);
             }
@@ -216,12 +238,23 @@ impl<'a> Parser<'a> {
             } else {
                 // couldn't match the left-right bracket, so rewind and treat it as a symbol
                 self.pos = mark; // rewind
-                self.failed_opens.insert(open_index);
+                self.failed_opens.insert((open_index, stop));
                 Simple::Symbol(open)
             }
         } else {
             // empty so must return symbol
             Simple::Symbol(open)
+        }
+    }
+
+    /// Whether the token at `close` closes the bracket at `open`.
+    fn closes(&self, open: usize, close: usize) -> bool {
+        let open = &self.entries[open];
+        match open.token {
+            Token::OpenBracket => open.close == close,
+            _ => self.entries.get(close).is_some_and(|entry| {
+                entry.token == Token::OpenCloseBracket && entry.text == open.text
+            }),
         }
     }
 
@@ -262,25 +295,29 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn next_matrix(&mut self, left: &'a str) -> Option<Matrix<'a>> {
+    /// Parse comma-separated matrix rows, stopping before the outer close bracket.
+    ///
+    /// As in asciimath, every row is bracketed by the same `(` `)` or `[` `]` pair and has the same
+    /// number of columns. Returns the row open bracket, the cells, and the number of columns.
+    fn next_matrix_rows(&mut self) -> Option<(&'a str, Vec<Expression<'a>>, usize)> {
         let mut data = Vec::new();
         let (open, num_cols, close) = self.next_matrix_row(&mut data)?;
-        loop {
-            match self.advance() {
-                Some((_, Token::Sep)) => {
-                    let (no, ncols, nc) = self.next_matrix_row(&mut data)?;
-                    if no != open || ncols != num_cols || nc != close {
-                        return None;
-                    }
-                }
-                Some((right, Token::CloseBracket))
-                    if data.len() > 1 && open == left && close == right =>
-                {
-                    return Some(Matrix::new(left, data, num_cols, right));
-                }
-                _ => return None,
+        if !MATRIX_ROW_BRACKETS.contains(&(open, close)) {
+            return None;
+        }
+        while self
+            .entries
+            .get(self.pos)
+            .is_some_and(|entry| entry.token == Token::Sep)
+        {
+            self.pos += 1;
+            let (row_open, row_cols, row_close) = self.next_matrix_row(&mut data)?;
+            if row_open != open || row_cols != num_cols || row_close != close {
+                return None;
             }
         }
+        self.entries.get(self.pos)?;
+        Some((open, data, num_cols))
     }
 
     /// Parse a `-` prefixing the following simple into an unbracketed group.
@@ -398,6 +435,51 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// Whether a matrix cell is a lone `|`, which marks a column line.
+fn is_column_line(cell: &Expression<'_>) -> bool {
+    matches!(
+        **cell,
+        [Intermediate::ScriptFunc(ScriptFunc::Simple(SimpleScript {
+            simple: Simple::Symbol("|"),
+            script: Script::None,
+        }))]
+    )
+}
+
+/// Remove columns whose every cell is a lone `|`, returning the remaining cells and columns, and
+/// the column boundaries where the removed columns were.
+///
+/// If every column is `|`, nothing is removed.
+fn split_column_lines(
+    cells: Vec<Expression<'_>>,
+    num_cols: usize,
+) -> (Vec<Expression<'_>>, usize, Vec<usize>) {
+    let line_cols: Vec<bool> = (0..num_cols)
+        .map(|col| cells.iter().skip(col).step_by(num_cols).all(is_column_line))
+        .collect();
+    let kept_cols = line_cols.iter().filter(|&&is_line| !is_line).count();
+    if kept_cols == 0 || kept_cols == num_cols {
+        (cells, num_cols, Vec::new())
+    } else {
+        let mut column_lines = Vec::new();
+        let mut boundary = 0;
+        for &is_line in &line_cols {
+            if is_line {
+                column_lines.push(boundary);
+            } else {
+                boundary += 1;
+            }
+        }
+        let kept = cells
+            .into_iter()
+            .enumerate()
+            .filter(|(index, _)| !line_cols[index % num_cols])
+            .map(|(_, cell)| cell)
+            .collect();
+        (kept, kept_cols, column_lines)
+    }
+}
+
 /// Parse a tokenized expression
 pub fn parse_tokens<'a, T>(tokens: T) -> Expression<'a>
 where
@@ -417,8 +499,8 @@ pub fn parse(inp: &str) -> Expression<'_> {
 #[cfg(test)]
 mod tests {
     use crate::tree::{
-        Expression, Frac, Func, Group, Intermediate, Matrix, Simple, SimpleBinary, SimpleFunc,
-        SimpleScript, SimpleUnary,
+        Expression, Frac, Func, Group, Intermediate, Matrix, ScriptFunc, Simple, SimpleBinary,
+        SimpleFunc, SimpleScript, SimpleUnary,
     };
 
     #[test]
@@ -722,8 +804,7 @@ mod tests {
 
     #[test]
     fn sets_as_groups() {
-        // asciimath treats sets special, here we opt to make matrix parsing a little more strict
-        // to avoid the possibility
+        // as in asciimath, rows of "(" in "{...}" are a set of tuples
         let expr = super::parse("{(x, y), (a, b)}");
         let expected = [Group::from_iter(
             "{",
@@ -867,6 +948,113 @@ mod tests {
         assert_eq!(expr.len(), 1);
         let cloned = expr.clone();
         assert_eq!(expr, cloned);
+    }
+
+    fn cells<'a>(idents: &[&'a str]) -> Vec<Expression<'a>> {
+        idents
+            .iter()
+            .map(|&ident| Expression::from_iter([Simple::Ident(ident)]))
+            .collect()
+    }
+
+    #[test]
+    fn matrix_rows_differ_from_outer_brackets() {
+        for (input, left, right) in [
+            ("{:(a, b), (c, d):}", "{:", ":}"),
+            ("{[a, b], [c, d]}", "{", "}"),
+            ("[(a, b), (c, d)]", "[", "]"),
+            ("|(a, b), (c, d)|", "|", "|"),
+        ] {
+            let expected =
+                Expression::from_iter([Matrix::new(left, cells(&["a", "b", "c", "d"]), 2, right)]);
+            assert_eq!(super::parse(input), expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn piecewise_matrix() {
+        let expr = super::parse("{(x, x>0),(y, x<0):}");
+        let Some(Intermediate::ScriptFunc(ScriptFunc::Simple(SimpleScript {
+            simple: Simple::Matrix(matrix),
+            ..
+        }))) = expr.first()
+        else {
+            panic!("not a matrix: {expr:?}");
+        };
+        assert_eq!((matrix.left_bracket, matrix.right_bracket), ("{", ":}"));
+        assert_eq!(matrix.rows().len(), 2);
+    }
+
+    #[test]
+    fn matrix_column_lines() {
+        let bar = || Expression::from_iter([Simple::Symbol("|")]);
+        for (input, expected) in [
+            (
+                "[(a, |, b), (c, |, d)]",
+                Matrix::new("[", cells(&["a", "b", "c", "d"]), 2, "]").with_column_lines([1]),
+            ),
+            (
+                "[(|, a, b, |), (|, c, d, |)]",
+                Matrix::new("[", cells(&["a", "b", "c", "d"]), 2, "]").with_column_lines([0, 2]),
+            ),
+            (
+                "[(a, |, b, |, c), (d, |, e, |, h)]",
+                Matrix::new("[", cells(&["a", "b", "c", "d", "e", "h"]), 3, "]")
+                    .with_column_lines([1, 2]),
+            ),
+            (
+                "[(a, |, |, b), (c, |, |, d)]",
+                Matrix::new("[", cells(&["a", "b", "c", "d"]), 2, "]").with_column_lines([1, 1]),
+            ),
+            (
+                // a line needs a "|" in every row, otherwise the "|" is a cell
+                "[(a, |, b), (c, d, e)]",
+                Matrix::new(
+                    "[",
+                    [cells(&["a"]), vec![bar()], cells(&["b", "c", "d", "e"])].concat(),
+                    3,
+                    "]",
+                ),
+            ),
+            (
+                // with nothing but lines, the lines are cells
+                "[(|, |), (|, |)]",
+                Matrix::new("[", vec![bar(); 4], 2, "]"),
+            ),
+        ] {
+            assert_eq!(
+                super::parse(input),
+                Expression::from_iter([expected]),
+                "{input}"
+            );
+        }
+    }
+
+    #[test]
+    fn matrix_cell_bars_group_within_cell() {
+        let expr = super::parse("[(|a|, b), (c, d)]");
+        let mut cells = cells(&["a", "b", "c", "d"]);
+        cells[0] = Expression::from_iter([Group::from_iter("|", [Simple::Ident("a")], "|")]);
+        let expected = Expression::from_iter([Matrix::new("[", cells, 2, "]")]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn single_cell_with_column_line_is_group() {
+        let expr = super::parse("[(a, |)]");
+        assert!(!format!("{expr:?}").contains("Matrix"), "{expr:?}");
+    }
+
+    #[test]
+    fn matrix_rows_need_parens_or_square_brackets() {
+        let expr = super::parse("[{a, b}, {c, d}]");
+        assert!(!format!("{expr:?}").contains("Matrix"), "{expr:?}");
+    }
+
+    #[test]
+    fn unmatched_bar_matrix_is_symbol() {
+        let expr = super::parse("|(a, b), (c, d)");
+        assert_eq!(expr.first(), Some(&Simple::Symbol("|").into()));
     }
 
     #[test]

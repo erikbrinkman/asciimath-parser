@@ -65,10 +65,12 @@
 //!
 //! Left-right brackets are closed greedily, and must match the same string on both sides. If they
 //! can't be matched they'll be parsed as a symbol. This is particularly useful for probability
-//! conditioning, e.g. "p(x|y)". For matrices, all left brackets must match, all right brackets
-//! must match, the number of separators (,) in each row must match, and there needs to be more
-//! than one element. This is more narrow than asciimath, but prevents need to have hardcoded rules
-//! for the difference between a set and a matrix.
+//! conditioning, e.g. "p(x|y)". Matrices follow asciimath: any brackets, including `|`, can
+//! surround comma-separated rows, every row must be bracketed by the same `(` `)` or `[` `]` pair
+//! and have the same number of separators (,), and there needs to be more than one element. Rows of
+//! `(` inside `{` `}` are a set of tuples rather than a matrix, so `{(x, y), (a, b)}` is a group
+//! while `{:(x, y), (a, b):}` is a matrix. A column whose cells are all a lone `|`, e.g.
+//! `[(a, |, b), (c, |, d)]`, is a [vertical line][tree::Matrix::column_lines] rather than a column.
 //!
 //! This dialect results in many ways to parse things that conceptually might have the same
 //! meaning. `"raw test"` and `text(raw text)` might seem to have the same meaning, but the first

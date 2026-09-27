@@ -158,6 +158,9 @@ impl<'a> Group<'a> {
 
 /// A matrix e.g. "[[a, b], [x, y]]"
 ///
+/// A column whose cells are all a lone `|`, as in "[(a, |, b), (c, |, d)]", isn't part of the
+/// cells, but is a vertical line in [`column_lines`][Matrix::column_lines].
+///
 /// Individual expressions can be accessed with [rows][Matrix::rows] to get a random access iterator of row
 /// slices, or by indexing with a 2d array of indices in `[column, row]` order, e.g. `matrix[[0, 0]]`.
 /// Note that this is the opposite of the conventional `[row, column]` order used by libraries like
@@ -168,10 +171,17 @@ pub struct Matrix<'a> {
     pub left_bracket: &'a str,
     /// The cells in the matrix in row-major order
     cells: Box<[Expression<'a>]>,
-    /// The number of columns in the matrix
-    num_cols: usize,
+    /// Boxed to keep matrices, and so every simple expression, small
+    shape: Box<MatrixShape>,
     /// The matrix's right bracket
     pub right_bracket: &'a str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MatrixShape {
+    num_cols: usize,
+    /// Column boundaries with a vertical line, in order
+    column_lines: Box<[usize]>,
 }
 
 impl<'a> Matrix<'a> {
@@ -192,22 +202,55 @@ impl<'a> Matrix<'a> {
         Matrix {
             left_bracket,
             cells,
-            num_cols,
+            shape: Box::new(MatrixShape {
+                num_cols,
+                column_lines: Box::default(),
+            }),
             right_bracket,
         }
+    }
+
+    /// Add vertical lines at column boundaries
+    ///
+    /// Boundary 0 is before the first column and `num_cols` is after the last. A boundary listed
+    /// twice has two lines.
+    ///
+    /// # Panics
+    /// When a boundary is greater than `num_cols`.
+    #[must_use]
+    pub fn with_column_lines<L>(mut self, column_lines: L) -> Self
+    where
+        L: Into<Box<[usize]>>,
+    {
+        let mut column_lines = column_lines.into();
+        assert!(
+            column_lines.iter().all(|&line| line <= self.shape.num_cols),
+            "column line out of bounds"
+        );
+        column_lines.sort_unstable();
+        self.shape.column_lines = column_lines;
+        self
+    }
+
+    /// The column boundaries with a vertical line, in order
+    ///
+    /// Boundary 0 is before the first column and [`num_cols`][Matrix::num_cols] is after the last.
+    #[must_use]
+    pub fn column_lines(&self) -> &[usize] {
+        &self.shape.column_lines
     }
 
     /// The number of columns
     #[must_use]
     pub fn num_cols(&self) -> usize {
-        self.num_cols
+        self.shape.num_cols
     }
 
     /// The number of rows
     #[must_use]
     pub fn num_rows(&self) -> usize {
         // num_cols is guaranteed positive by `Matrix::new`, so this never divides by zero
-        self.cells.len() / self.num_cols
+        self.cells.len() / self.shape.num_cols
     }
 
     /// The number of total cells
@@ -219,7 +262,7 @@ impl<'a> Matrix<'a> {
     /// A top-down iterator over rows as slices
     #[must_use]
     pub fn rows(&self) -> MatrixRows<'a, '_> {
-        MatrixRows(self.cells.chunks_exact(self.num_cols))
+        MatrixRows(self.cells.chunks_exact(self.shape.num_cols))
     }
 
     /// A top-down iterator over rows as slices
@@ -265,8 +308,8 @@ impl<'a> Index<[usize; 2]> for Matrix<'a> {
     /// When indices are out of bounds `[x, y]`, `x >= num_cols`, `y >= num_rows`
     fn index(&self, idx: [usize; 2]) -> &Self::Output {
         let [x, y] = idx;
-        assert!(x < self.num_cols, "index out of bounds");
-        &self.cells[x + self.num_cols * y]
+        assert!(x < self.shape.num_cols, "index out of bounds");
+        &self.cells[x + self.shape.num_cols * y]
     }
 }
 
@@ -918,5 +961,19 @@ mod tests {
 
         let boxed: Box<[Intermediate<'_>]> = Box::new([Intermediate::from(Simple::Ident("x"))]);
         assert_eq!(Expression::from(boxed).len(), 1);
+    }
+
+    #[test]
+    fn matrix_column_lines_sorted() {
+        let cells = [Expression::from_iter([Simple::Ident("x")])];
+        let matrix = Matrix::new("[", cells, 1, "]").with_column_lines([1, 0, 1]);
+        assert_eq!(matrix.column_lines(), [0, 1, 1]);
+    }
+
+    #[test]
+    #[should_panic(expected = "column line out of bounds")]
+    fn matrix_column_line_out_of_bounds() {
+        let cells = [Expression::from_iter([Simple::Ident("x")])];
+        let _ = Matrix::new("[", cells, 1, "]").with_column_lines([2]);
     }
 }
