@@ -1,6 +1,6 @@
 [package]
 name = "asciimath-parser"
-version = "0.2.1"
+version = "0.3.0"
 description = "A fast extensible memory-efficient asciimath parser"
 repository = "https://github.com/erikbrinkman/asciimath-parser"
 license = "MIT"
