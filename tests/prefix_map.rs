@@ -1,14 +1,23 @@
-#[cfg(feature = "fst")]
-use asciimath_parser::prefix_map::FstPrefixMap;
-#[cfg(feature = "qp-trie")]
-use asciimath_parser::prefix_map::QpTriePrefixMap;
-use asciimath_parser::prefix_map::{HashPrefixMap, LinearPrefixMap};
-use asciimath_parser::{ASCIIMATH_TOKENS, Tokenizer};
+use asciimath_parser::prefix_map::{HashPrefixMap, PrefixMap};
+use asciimath_parser::{ASCIIMATH_TOKENS, Token, Tokenizer};
 use rand::distr::Alphanumeric;
 use rand::distr::slice::Choose;
 use rand::distr::weighted::WeightedIndex;
 use rand::rngs::StdRng;
 use rand::{Rng, RngExt, SeedableRng};
+
+/// A reference prefix map that checks every key
+struct LinearPrefixMap(Vec<(&'static str, Token)>);
+
+impl PrefixMap<Token> for LinearPrefixMap {
+    fn get_longest_prefix(&self, inp: &str) -> Option<(usize, &Token)> {
+        self.0
+            .iter()
+            .filter(|(key, _)| inp.starts_with(key))
+            .max_by_key(|(key, _)| key.len())
+            .map(|(key, token)| (key.len(), token))
+    }
+}
 
 fn random_string<V>(rng: &mut impl Rng, tokens: &[(&str, V)]) -> String {
     let token = Choose::new(tokens).unwrap();
@@ -33,7 +42,7 @@ macro_rules! make_test {
 
             #[test]
             fn random_prefix() {
-                let linear_tokens = LinearPrefixMap::from_vec(ASCIIMATH_TOKENS);
+                let linear_tokens = LinearPrefixMap(ASCIIMATH_TOKENS.into());
                 let ref_tokens = $struct::$factory(ASCIIMATH_TOKENS);
 
                 let mut rng = StdRng::from_seed([0; 32]);
@@ -56,7 +65,3 @@ macro_rules! make_test {
 }
 
 make_test! {hash, HashPrefixMap, from_iter}
-#[cfg(feature = "fst")]
-make_test! {fst, FstPrefixMap, from_vec}
-#[cfg(feature = "qp-trie")]
-make_test! {qptrie, QpTriePrefixMap, from_iter}

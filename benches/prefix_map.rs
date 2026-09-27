@@ -4,13 +4,7 @@ mod examples;
 
 extern crate test;
 
-#[cfg(feature = "fnv")]
-use asciimath_parser::prefix_map::FnvHashPrefixMap;
-#[cfg(feature = "fst")]
-use asciimath_parser::prefix_map::FstPrefixMap;
-#[cfg(feature = "qp-trie")]
-use asciimath_parser::prefix_map::QpTriePrefixMap;
-use asciimath_parser::prefix_map::{HashPrefixMap, LinearPrefixMap};
+use asciimath_parser::prefix_map::HashPrefixMap;
 use asciimath_parser::{ASCIIMATH_TOKENS, Tokenizer};
 use examples::{EXAMPLES, RANDOM_EXAMPLES};
 use std::hint::black_box;
@@ -49,11 +43,4 @@ macro_rules! make_bench {
     };
 }
 
-make_bench! {linear, LinearPrefixMap, from_vec}
 make_bench! {hash, HashPrefixMap, from_iter}
-#[cfg(feature = "fst")]
-make_bench! {fst, FstPrefixMap, from_vec}
-#[cfg(feature = "fnv")]
-make_bench! {fnv, FnvHashPrefixMap, from_iter_hasher}
-#[cfg(feature = "qp-trie")]
-make_bench! {qptrie, QpTriePrefixMap, from_iter}

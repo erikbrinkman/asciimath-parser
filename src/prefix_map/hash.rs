@@ -1,16 +1,14 @@
 use super::PrefixMap;
+use rustc_hash::FxBuildHasher;
 use std::borrow::Borrow;
 use std::cmp::min;
 use std::collections::HashMap;
-use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
 
 /// A prefix map that uses length buckets and hashmaps for lookups
 ///
-/// For asciimath, the default hasher makes this the third fastest prefix map. If the `qp-trie`
-/// feature isn't enabled, this will be the default. Finding the longest prefix takes
-/// `O(len_search_key)`, but if all keys are long and roughly the same length this may be faster
-/// than `QpTriePrefixMap`.
+/// Finding the longest prefix takes `O(len_search_key)`. The default hasher is `rustc-hash`, which
+/// is faster than the standard library's for short keys like asciimath tokens.
 ///
 /// # Example
 /// ```
@@ -20,7 +18,7 @@ use std::hash::{BuildHasher, Hash};
 /// let token_map = HashPrefixMap::from_iter(ASCIIMATH_TOKENS);
 /// ```
 #[derive(Debug, Clone)]
-pub struct HashPrefixMap<K, V, S = RandomState>(Box<[HashMap<K, V, S>]>);
+pub struct HashPrefixMap<K, V, S = FxBuildHasher>(Box<[HashMap<K, V, S>]>);
 
 impl<K, V, S> HashPrefixMap<K, V, S>
 where
@@ -60,8 +58,7 @@ where
     K: Borrow<str> + Hash + Eq,
     S: BuildHasher,
 {
-    fn get_longest_prefix<P: AsRef<str>>(&self, inp: P) -> Option<(usize, &V)> {
-        let inp = inp.as_ref();
+    fn get_longest_prefix(&self, inp: &str) -> Option<(usize, &V)> {
         for (len, map) in self.0[..min(self.0.len(), inp.len() + 1)]
             .iter()
             .enumerate()
