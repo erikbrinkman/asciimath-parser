@@ -9,6 +9,7 @@ rust-version = "1.88"
 documentation = "https://docs.rs/asciimath-parser"
 keywords = ["asciimath", "parser", "math"]
 categories = ["parser-implementations", "mathematics"]
+include = ["/src", "/LICENSE", "/README.md"]
 
 [dependencies]
 rustc-hash = "2"
