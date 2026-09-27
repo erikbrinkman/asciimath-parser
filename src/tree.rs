@@ -22,7 +22,7 @@ pub struct SimpleUnary<'a> {
     /// The operator name
     pub op: &'a str,
     /// The operator argument
-    arg: Box<Simple<'a>>,
+    pub arg: Box<Simple<'a>>,
 }
 
 impl<'a> SimpleUnary<'a> {
@@ -53,7 +53,7 @@ pub struct SimpleFunc<'a> {
     /// The function name
     pub func: &'a str,
     /// The function argument
-    arg: Box<Simple<'a>>,
+    pub arg: Box<Simple<'a>>,
 }
 
 impl<'a> SimpleFunc<'a> {
@@ -81,9 +81,9 @@ pub struct SimpleBinary<'a> {
     /// The operator name
     pub op: &'a str,
     /// The first operator argument
-    first: Box<Simple<'a>>,
+    pub first: Box<Simple<'a>>,
     /// The second operator argument
-    second: Box<Simple<'a>>,
+    pub second: Box<Simple<'a>>,
 }
 
 impl<'a> SimpleBinary<'a> {
@@ -494,7 +494,7 @@ pub struct Func<'a> {
     /// Any script modifications of the function
     pub script: Script<'a>,
     /// The function argument
-    arg: Box<ScriptFunc<'a>>,
+    pub arg: Box<ScriptFunc<'a>>,
 }
 
 impl<'a> Func<'a> {
