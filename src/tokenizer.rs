@@ -1,7 +1,4 @@
-#[cfg(not(feature = "qp-trie"))]
 use crate::prefix_map::{HashPrefixMap, PrefixMap};
-#[cfg(feature = "qp-trie")]
-use crate::prefix_map::{PrefixMap, QpTriePrefixMap};
 use std::collections::VecDeque;
 use std::iter::FusedIterator;
 use std::sync::LazyLock;
@@ -117,15 +114,8 @@ pub const ASCIIMATH_TOKENS: [(&str, Token); 386] = tokens!(
     Ident => "dx", "dy", "dz", "dt";
 );
 
-#[cfg(feature = "qp-trie")]
-pub type DefaultTokens = QpTriePrefixMap<&'static str, Token>;
-#[cfg(not(feature = "qp-trie"))]
 pub type DefaultTokens = HashPrefixMap<&'static str, Token>;
 
-#[cfg(feature = "qp-trie")]
-static DEFAULT_TOKENS: LazyLock<DefaultTokens> =
-    LazyLock::new(|| QpTriePrefixMap::from_iter(ASCIIMATH_TOKENS));
-#[cfg(not(feature = "qp-trie"))]
 static DEFAULT_TOKENS: LazyLock<DefaultTokens> =
     LazyLock::new(|| HashPrefixMap::from_iter(ASCIIMATH_TOKENS));
 
