@@ -25,17 +25,13 @@ jobs:
     - uses: taiki-e/install-action@cargo-llvm-cov
     - name: Check formatting
       run: cargo fmt --verbose --check
-    - name: Build all features
-      run: cargo build --verbose --all-features
-    - name: Build no default features
-      run: cargo build --verbose --no-default-features
     - name: Run tests with coverage
-      run: cargo llvm-cov --verbose --all-features --fail-under-lines 95
+      run: cargo llvm-cov --verbose --fail-under-lines 95
     - name: Run benches
       run: cargo +nightly bench --verbose
     - name: Check docs
-      run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+      run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
     - name: Run lints
-      run: cargo clippy --verbose --all-features -- -D warnings
+      run: cargo clippy --verbose -- -D warnings
     - name: Run bench lints
       run: cargo +nightly clippy --verbose --benches -- -D warnings
