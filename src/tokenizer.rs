@@ -2,6 +2,7 @@
 use crate::prefix_map::{HashPrefixMap, PrefixMap};
 #[cfg(feature = "qp-trie")]
 use crate::prefix_map::{PrefixMap, QpTriePrefixMap};
+use std::collections::VecDeque;
 use std::iter::FusedIterator;
 use std::sync::LazyLock;
 
@@ -157,10 +158,18 @@ fn strip_text(inp: &str) -> Option<(&str, &str)> {
     Some((&inp[1..=len], &inp[len + 2..]))
 }
 
+/// Unary tokens whose bracketed argument is literal text rather than math.
+const TEXT_COMMANDS: [&str; 2] = ["text", "mbox"];
+
 /// A tokenizer where unknown characters are parsed as individual identifiers
 ///
 /// This is the compliant mode of tokenization for for asciimath and means that unknown characters
 /// are identified individually
+///
+/// As in asciimath, when a `text` or `mbox` [unary][Token::Unary] token is followed by `(`, `[`,
+/// or `{`, everything up to the first matching close bracket is a single [`Token::Text`], so
+/// `text(a b)` yields `text`, `(`, `a b`, `)`. Without a close bracket the text runs to the end
+/// of the input.
 ///
 /// # Example
 /// ```
@@ -173,6 +182,8 @@ pub struct Tokenizer<'a, 'b, T> {
     remaining: &'a str,
     token_map: &'b T,
     char_ident: bool,
+    /// Tokens already split off `remaining`, emitted before tokenizing it further.
+    queued: VecDeque<(&'a str, Token)>,
 }
 
 impl<'a> Tokenizer<'a, 'static, DefaultTokens> {
@@ -204,6 +215,31 @@ impl<'a, 'b, T> Tokenizer<'a, 'b, T> {
             remaining: inp,
             token_map,
             char_ident,
+            queued: VecDeque::new(),
+        }
+    }
+
+    /// Queue a bracketed literal text argument at the start of `remaining`, if there is one.
+    fn queue_literal_text(&mut self) {
+        let rest = self.remaining.trim_start();
+        let close = match rest.chars().next() {
+            Some('(') => ')',
+            Some('[') => ']',
+            Some('{') => '}',
+            _ => return,
+        };
+        let (open, after_open) = rest.split_at(1);
+        self.queued.push_back((open, Token::OpenBracket));
+        if let Some(len) = after_open.find(close) {
+            let (text, after_text) = after_open.split_at(len);
+            let (close, remaining) = after_text.split_at(1);
+            self.queued.push_back((text, Token::Text));
+            self.queued.push_back((close, Token::CloseBracket));
+            self.remaining = remaining;
+        } else {
+            let (text, remaining) = after_open.split_at(after_open.len());
+            self.queued.push_back((text, Token::Text));
+            self.remaining = remaining;
         }
     }
 }
@@ -215,6 +251,9 @@ where
     type Item = (&'a str, Token);
 
     fn next(&mut self) -> Option<Self::Item> {
+        if let Some(queued) = self.queued.pop_front() {
+            return Some(queued);
+        }
         // remove whitespace
         self.remaining = self.remaining.trim_start();
         if let Some((len, &token)) = self.token_map.get_longest_prefix(self.remaining)
@@ -222,6 +261,9 @@ where
         {
             let (pref, rem) = self.remaining.split_at(len);
             self.remaining = rem;
+            if token == Token::Unary && TEXT_COMMANDS.contains(&pref) {
+                self.queue_literal_text();
+            }
             Some((pref, token))
         } else if let Some((num, res)) = strip_number(self.remaining) {
             // number
@@ -269,7 +311,8 @@ where
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        (0, Some(self.remaining.len()))
+        let queued = self.queued.len();
+        (queued, Some(queued + self.remaining.len()))
     }
 }
 
@@ -394,6 +437,77 @@ mod tests {
         );
         assert!(ASCIIMATH_TOKENS.iter().any(|&(name, _)| name == "approx"));
         assert!(!ASCIIMATH_TOKENS.iter().any(|&(name, _)| name == "aprox"));
+    }
+
+    #[test]
+    fn literal_text_commands() {
+        let tokens: Vec<_> =
+            Tokenizer::new("text(hello world) mbox [a+b] x text{ (c) } d").collect();
+        assert_eq!(
+            *tokens,
+            [
+                ("text", Token::Unary),
+                ("(", Token::OpenBracket),
+                ("hello world", Token::Text),
+                (")", Token::CloseBracket),
+                ("mbox", Token::Unary),
+                ("[", Token::OpenBracket),
+                ("a+b", Token::Text),
+                ("]", Token::CloseBracket),
+                ("x", Token::Ident),
+                ("text", Token::Unary),
+                ("{", Token::OpenBracket),
+                (" (c) ", Token::Text),
+                ("}", Token::CloseBracket),
+                ("d", Token::Ident),
+            ]
+        );
+    }
+
+    #[test]
+    fn literal_text_edge_cases() {
+        let empty: Vec<_> = Tokenizer::new("text()").collect();
+        assert_eq!(
+            *empty,
+            [
+                ("text", Token::Unary),
+                ("(", Token::OpenBracket),
+                ("", Token::Text),
+                (")", Token::CloseBracket),
+            ]
+        );
+
+        let unclosed: Vec<_> = Tokenizer::new("mbox(a b").collect();
+        assert_eq!(
+            *unclosed,
+            [
+                ("mbox", Token::Unary),
+                ("(", Token::OpenBracket),
+                ("a b", Token::Text),
+            ]
+        );
+
+        let unbracketed: Vec<_> = Tokenizer::new("text ab").collect();
+        assert_eq!(
+            *unbracketed,
+            [
+                ("text", Token::Unary),
+                ("a", Token::Ident),
+                ("b", Token::Ident),
+            ]
+        );
+
+        let token_map = HashPrefixMap::from_iter(ASCIIMATH_TOKENS);
+        let words: Vec<_> = Tokenizer::with_tokens("text(a b)", &token_map, false).collect();
+        assert_eq!(
+            *words,
+            [
+                ("text", Token::Unary),
+                ("(", Token::OpenBracket),
+                ("a b", Token::Text),
+                (")", Token::CloseBracket),
+            ]
+        );
     }
 
     #[test]

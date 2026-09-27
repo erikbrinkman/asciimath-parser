@@ -72,9 +72,10 @@
 //!
 //! This dialect results in many ways to parse things that conceptually might have the same
 //! meaning. `"raw test"` and `text(raw text)` might seem to have the same meaning, but the first
-//! is actually parsed as raw text, and the second is parsed as a unary function "text" with an
-//! argument. Similarly `1 / 2` and `frac 1 2` both represent the same thing, but the first is a
-//! high level [`Frac`][tree::Frac] construct, while the later is a binary operator called "frac".
+//! is actually parsed as raw text, and the second is parsed as a unary function "text" whose
+//! argument is a group holding the raw text. Similarly `1 / 2` and `frac 1 2` both represent the
+//! same thing, but the first is a high level [`Frac`][tree::Frac] construct, while the later is a
+//! binary operator called "frac".
 //!
 //! ### Differences with Asciimath
 //!

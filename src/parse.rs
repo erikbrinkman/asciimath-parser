@@ -766,6 +766,16 @@ mod tests {
     }
 
     #[test]
+    fn literal_text_command() {
+        let expr = super::parse("text(hello world)");
+        let expected = Expression::from_iter([SimpleUnary::new(
+            "text",
+            Group::from_iter("(", [Simple::Text("hello world")], ")"),
+        )]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
     fn bare_symbol() {
         let expr = super::parse("alpha");
         let expected = Expression::from_iter([Simple::Symbol("alpha")]);
