@@ -23,6 +23,8 @@ pub enum Token {
     Text,
     /// A raw identifier
     Ident,
+    /// Unmatched characters with no letters or digits, like `+`
+    Operator,
     /// A defined symbol token
     Symbol,
     /// A function
@@ -158,13 +160,23 @@ fn strip_text(inp: &str) -> Option<(&str, &str)> {
     Some((&inp[1..=len], &inp[len + 2..]))
 }
 
+/// The token for characters that didn't match any token, number, or text
+fn unmatched_token(raw: &str) -> Token {
+    if raw.chars().any(char::is_alphanumeric) {
+        Token::Ident
+    } else {
+        Token::Operator
+    }
+}
+
 /// Unary tokens whose bracketed argument is literal text rather than math.
 const TEXT_COMMANDS: [&str; 2] = ["text", "mbox"];
 
 /// A tokenizer where unknown characters are parsed as individual identifiers
 ///
 /// This is the compliant mode of tokenization for for asciimath and means that unknown characters
-/// are identified individually
+/// are identified individually. As in asciimath, unknown characters that aren't letters or digits,
+/// like `+`, are [operators][Token::Operator] instead.
 ///
 /// As in asciimath, when a `text` or `mbox` [unary][Token::Unary] token is followed by `(`, `[`,
 /// or `{`, everything up to the first matching close bracket is a single [`Token::Text`], so
@@ -209,7 +221,8 @@ impl<'a, 'b, T> Tokenizer<'a, 'b, T> {
     /// - `inp`: the string to tokenize
     /// - `token_map`: a prefix map of available tokens
     /// - `char_ident`: whether to parse individual characters as identifiers (standard) or to
-    ///   treat entire sequences of unmatched characters as a single identifier.
+    ///   treat entire sequences of unmatched characters as a single identifier. Either way, a token
+    ///   with no letters or digits is an [operator][Token::Operator].
     pub fn with_tokens(inp: &'a str, token_map: &'b T, char_ident: bool) -> Self {
         Tokenizer {
             remaining: inp,
@@ -279,7 +292,7 @@ where
                 let len = chr.len_utf8();
                 let raw = &self.remaining[..len];
                 self.remaining = &self.remaining[len..];
-                (raw, Token::Ident)
+                (raw, unmatched_token(raw))
             })
         } else {
             // one ident per run of unmatched chars; only break where a token/number/text starts, so
@@ -305,7 +318,7 @@ where
             } else {
                 let raw = &self.remaining[..len];
                 self.remaining = &self.remaining[len..];
-                Some((raw, Token::Ident))
+                Some((raw, unmatched_token(raw)))
             }
         }
     }
@@ -338,13 +351,39 @@ mod tests {
     }
 
     #[test]
+    fn unknown_non_letters_are_operators() {
+        let tokens: Vec<_> = Tokenizer::new("a+b!α").collect();
+        assert_eq!(
+            *tokens,
+            [
+                ("a", Token::Ident),
+                ("+", Token::Operator),
+                ("b", Token::Ident),
+                ("!", Token::Operator),
+                ("α", Token::Ident),
+            ]
+        );
+
+        let token_map = HashPrefixMap::from_iter(ASCIIMATH_TOKENS);
+        let runs: Vec<_> = Tokenizer::with_tokens("ab +? c", &token_map, false).collect();
+        assert_eq!(
+            *runs,
+            [
+                ("ab", Token::Ident),
+                ("+?", Token::Operator),
+                ("c", Token::Ident),
+            ]
+        );
+    }
+
+    #[test]
     fn unterminated_text() {
-        // an opening quote with no closing quote isn't text; the quote falls through to an ident
+        // an opening quote with no closing quote isn't text; the quote falls through to an operator
         let tokens: Vec<_> = Tokenizer::new(r#""ab"#).collect();
         assert_eq!(
             *tokens,
             [
-                ("\"", Token::Ident),
+                ("\"", Token::Operator),
                 ("a", Token::Ident),
                 ("b", Token::Ident)
             ]
@@ -410,7 +449,7 @@ mod tests {
             *dotted,
             [
                 ("a.b", Token::Ident),
-                ("+", Token::Ident),
+                ("+", Token::Operator),
                 ("c", Token::Ident),
             ]
         );

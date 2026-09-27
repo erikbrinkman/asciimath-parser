@@ -328,6 +328,8 @@ pub enum Simple<'a> {
     Text(&'a str),
     /// An identity, usually a single character of something that doesn't have asciimath meaning
     Ident(&'a str),
+    /// An unrecognized operator, like `+`, from characters with no letters or digits
+    Operator(&'a str),
     /// A recognized symbol
     Symbol(&'a str),
     /// A unary operator
