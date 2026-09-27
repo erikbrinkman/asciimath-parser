@@ -145,7 +145,7 @@
 //! exceptions to this hierarchy are [`Group`][tree::Group] and [`Matrix`][tree::Matrix] that are
 //! both "simple" structures, but contain nested expressions. All of these types implement `From`
 //! from their singleton children, allowing promoting simple types to more complex ones with
-//! minimal overhead. All of their members are public allowing destructuring, especially with the
+//! minimal overhead. Most of their members are public allowing destructuring, especially with the
 //! `box_patterns` feature. See [`tree`] for more details.
 //!
 //! ```
