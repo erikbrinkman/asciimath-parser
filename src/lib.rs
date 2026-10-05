@@ -72,6 +72,11 @@
 //! while `{:(x, y), (a, b):}` is a matrix. A column whose cells are all a lone `|`, e.g.
 //! `[(a, |, b), (c, |, d)]`, is a [vertical line][tree::Matrix::column_lines] rather than a column.
 //!
+//! Whitespace only separates tokens, but the tree keeps it wherever it sat between two neighboring
+//! intermediates of an expression, as a [`Space`][tree::Intermediate::Space], so that it can be
+//! written back out. Whitespace anywhere else is dropped, like around the `/` of a fraction, before
+//! a script or an argument, or just inside a bracket.
+//!
 //! This dialect results in many ways to parse things that conceptually might have the same
 //! meaning. `"raw test"` and `text(raw text)` might seem to have the same meaning, but the first
 //! is actually parsed as raw text, and the second is parsed as a unary function "text" whose

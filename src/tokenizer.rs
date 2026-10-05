@@ -36,6 +36,10 @@ pub enum Token {
     CloseBracket,
     /// A bracket that can either open or close
     OpenCloseBracket,
+    /// A run of whitespace between other tokens
+    ///
+    /// The whitespace between `text` or `mbox` and its bracket isn't yielded.
+    Space,
 }
 
 macro_rules! tokens {
@@ -257,9 +261,14 @@ where
         if let Some(queued) = self.queued.pop_front() {
             return Some(queued);
         }
-        // remove whitespace
-        self.remaining = self.remaining.trim_start();
-        if let Some((len, &token)) = self.token_map.get_longest_prefix(self.remaining)
+        let trimmed = self.remaining.trim_start();
+        let (space, rest) = self
+            .remaining
+            .split_at(self.remaining.len() - trimmed.len());
+        if !space.is_empty() {
+            self.remaining = rest;
+            Some((space, Token::Space))
+        } else if let Some((len, &token)) = self.token_map.get_longest_prefix(self.remaining)
             && len > 0
         {
             let (pref, rem) = self.remaining.split_at(len);
@@ -326,9 +335,30 @@ mod tests {
     use crate::prefix_map::HashPrefixMap;
     use crate::{ASCIIMATH_TOKENS, Token, Tokenizer};
 
+    fn not_space(&(_, token): &(&str, Token)) -> bool {
+        token != Token::Space
+    }
+
+    #[test]
+    fn whitespace_is_a_token() {
+        let tokens: Vec<_> = Tokenizer::new(" a  +\tb ").collect();
+        assert_eq!(
+            *tokens,
+            [
+                (" ", Token::Space),
+                ("a", Token::Ident),
+                ("  ", Token::Space),
+                ("+", Token::Operator),
+                ("\t", Token::Space),
+                ("b", Token::Ident),
+                (" ", Token::Space),
+            ]
+        );
+    }
+
     #[test]
     fn decimal_numbers() {
-        let tokens: Vec<_> = Tokenizer::new("3.14 .5 1.2.3").collect();
+        let tokens: Vec<_> = Tokenizer::new("3.14 .5 1.2.3").filter(not_space).collect();
         assert_eq!(
             *tokens,
             [
@@ -342,7 +372,7 @@ mod tests {
 
     #[test]
     fn unknown_non_letters_are_operators() {
-        let tokens: Vec<_> = Tokenizer::new("a+b!α").collect();
+        let tokens: Vec<_> = Tokenizer::new("a+b!α").filter(not_space).collect();
         assert_eq!(
             *tokens,
             [
@@ -355,7 +385,9 @@ mod tests {
         );
 
         let token_map = HashPrefixMap::from_iter(ASCIIMATH_TOKENS);
-        let runs: Vec<_> = Tokenizer::with_tokens("ab +? c", &token_map, false).collect();
+        let runs: Vec<_> = Tokenizer::with_tokens("ab +? c", &token_map, false)
+            .filter(not_space)
+            .collect();
         assert_eq!(
             *runs,
             [
@@ -369,7 +401,7 @@ mod tests {
     #[test]
     fn unterminated_text() {
         // an opening quote with no closing quote isn't text; the quote falls through to an operator
-        let tokens: Vec<_> = Tokenizer::new(r#""ab"#).collect();
+        let tokens: Vec<_> = Tokenizer::new(r#""ab"#).filter(not_space).collect();
         assert_eq!(
             *tokens,
             [
@@ -382,8 +414,9 @@ mod tests {
 
     #[test]
     fn char_tokenizer() {
-        let tokens: Vec<_> =
-            Tokenizer::new(r#"frac (abs x) xy / 7^2 "text with spaces""#).collect();
+        let tokens: Vec<_> = Tokenizer::new(r#"frac (abs x) xy / 7^2 "text with spaces""#)
+            .filter(not_space)
+            .collect();
         assert_eq!(
             *tokens,
             [
@@ -411,6 +444,7 @@ mod tests {
             &token_map,
             false,
         )
+        .filter(not_space)
         .collect();
         assert_eq!(
             *tokens,
@@ -434,7 +468,9 @@ mod tests {
     fn str_tokenizer_absorbs_stray_dot_and_unterminated_text() {
         let token_map = HashPrefixMap::from_iter(ASCIIMATH_TOKENS);
 
-        let dotted: Vec<_> = Tokenizer::with_tokens("a.b + c", &token_map, false).collect();
+        let dotted: Vec<_> = Tokenizer::with_tokens("a.b + c", &token_map, false)
+            .filter(not_space)
+            .collect();
         assert_eq!(
             *dotted,
             [
@@ -444,13 +480,17 @@ mod tests {
             ]
         );
 
-        let unterm: Vec<_> = Tokenizer::with_tokens(r#"x "unterm"#, &token_map, false).collect();
+        let unterm: Vec<_> = Tokenizer::with_tokens(r#"x "unterm"#, &token_map, false)
+            .filter(not_space)
+            .collect();
         assert_eq!(*unterm, [("x", Token::Ident), ("\"unterm", Token::Ident)]);
     }
 
     #[test]
     fn asciimath_symbols() {
-        let tokens: Vec<_> = Tokenizer::new("x ~~ y !sube o- arcsec bbsfit dArr").collect();
+        let tokens: Vec<_> = Tokenizer::new("x ~~ y !sube o- arcsec bbsfit dArr")
+            .filter(not_space)
+            .collect();
         assert_eq!(
             *tokens,
             [
@@ -470,8 +510,9 @@ mod tests {
 
     #[test]
     fn literal_text_commands() {
-        let tokens: Vec<_> =
-            Tokenizer::new("text(hello world) mbox [a+b] x text{ (c) } d").collect();
+        let tokens: Vec<_> = Tokenizer::new("text(hello world) mbox [a+b] x text{ (c) } d")
+            .filter(not_space)
+            .collect();
         assert_eq!(
             *tokens,
             [
@@ -495,7 +536,7 @@ mod tests {
 
     #[test]
     fn literal_text_edge_cases() {
-        let empty: Vec<_> = Tokenizer::new("text()").collect();
+        let empty: Vec<_> = Tokenizer::new("text()").filter(not_space).collect();
         assert_eq!(
             *empty,
             [
@@ -506,7 +547,7 @@ mod tests {
             ]
         );
 
-        let unclosed: Vec<_> = Tokenizer::new("mbox(a b").collect();
+        let unclosed: Vec<_> = Tokenizer::new("mbox(a b").filter(not_space).collect();
         assert_eq!(
             *unclosed,
             [
@@ -516,7 +557,7 @@ mod tests {
             ]
         );
 
-        let unbracketed: Vec<_> = Tokenizer::new("text ab").collect();
+        let unbracketed: Vec<_> = Tokenizer::new("text ab").filter(not_space).collect();
         assert_eq!(
             *unbracketed,
             [
@@ -527,7 +568,9 @@ mod tests {
         );
 
         let token_map = HashPrefixMap::from_iter(ASCIIMATH_TOKENS);
-        let words: Vec<_> = Tokenizer::with_tokens("text(a b)", &token_map, false).collect();
+        let words: Vec<_> = Tokenizer::with_tokens("text(a b)", &token_map, false)
+            .filter(not_space)
+            .collect();
         assert_eq!(
             *words,
             [
@@ -542,7 +585,9 @@ mod tests {
     #[test]
     fn perverse_tokens() {
         let token_map = HashPrefixMap::from_iter([("", Token::Symbol), (" 4", Token::Symbol)]);
-        let tokens: Vec<_> = Tokenizer::with_tokens(" 4 x 4 6", &token_map, false).collect();
+        let tokens: Vec<_> = Tokenizer::with_tokens(" 4 x 4 6", &token_map, false)
+            .filter(not_space)
+            .collect();
         assert_eq!(
             *tokens,
             [

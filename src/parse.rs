@@ -18,6 +18,8 @@ const MATRIX_ROW_BRACKETS: [(&str, &str); 2] = [("(", ")"), ("[", "]")];
 struct Entry<'a> {
     text: &'a str,
     token: Token,
+    /// The whitespace before this token, or empty if there was none.
+    space: &'a str,
     /// Matching close-bracket index for an open bracket, or `usize::MAX` if unmatched.
     close: usize,
     /// Whether this open bracket has a top-level separator (more than one column).
@@ -46,15 +48,23 @@ struct Parser<'a> {
 impl<'a> Parser<'a> {
     fn new(tokens: impl IntoIterator<Item = (&'a str, Token)>) -> Self {
         // collect straight into entries; unmatched open brackets keep close == usize::MAX
-        let mut entries: Vec<Entry<'a>> = tokens
-            .into_iter()
-            .map(|(text, token)| Entry {
-                text,
-                token,
-                close: usize::MAX,
-                has_sep: false,
-            })
-            .collect();
+        let mut entries: Vec<Entry<'a>> = Vec::new();
+        let mut space = "";
+        for (text, token) in tokens {
+            if token == Token::Space {
+                assert!(space.is_empty(), "two space tokens in a row");
+                space = text;
+            } else {
+                entries.push(Entry {
+                    text,
+                    token,
+                    space,
+                    close: usize::MAX,
+                    has_sep: false,
+                });
+                space = "";
+            }
+        }
         // one linear pass matches brackets and records top-level separators
         let mut open_stack: Vec<usize> = Vec::new();
         for index in 0..entries.len() {
@@ -136,7 +146,8 @@ impl<'a> Parser<'a> {
             Some((raw, Token::Frac | Token::Super | Token::Sub | Token::Sep)) => {
                 Some(Simple::Symbol(raw))
             }
-            None => None,
+            // spaces are folded into the entry after them, so never reach here
+            Some((_, Token::Space)) | None => None,
         };
         self.depth -= 1;
         result
@@ -226,11 +237,7 @@ impl<'a> Parser<'a> {
             // take the first intermediate, even if it's another OpenCloseBracket
             let mut inters = vec![first];
             // any other left-right bracket, e.g. "|" inside "||", opens its own group
-            while !self.at_open_close(open)
-                && let Some(inter) = self.next_intermediate(stop)
-            {
-                inters.push(inter);
-            }
+            while !self.at_open_close(open) && self.push_intermediate(&mut inters, stop) {}
             if self.at_open_close(open)
                 && let Some((close, _)) = self.advance()
             {
@@ -265,11 +272,32 @@ impl<'a> Parser<'a> {
             .is_some_and(|entry| entry.token == Token::OpenCloseBracket && entry.text == bracket)
     }
 
+    /// Parse one intermediate onto `inters`, keeping the whitespace before it unless it's first.
+    fn push_intermediate(
+        &mut self,
+        inters: &mut Vec<Intermediate<'a>>,
+        stop: Option<Token>,
+    ) -> bool {
+        let space = self.entries.get(self.pos).map_or("", |entry| entry.space);
+        if let Some(inter) = self.next_intermediate(stop) {
+            if !space.is_empty() && !inters.is_empty() {
+                inters.push(Intermediate::Space(space));
+            }
+            inters.push(inter);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Parse intermediates onto `inters` until none is left, keeping the whitespace between them.
+    fn extend_intermediates(&mut self, inters: &mut Vec<Intermediate<'a>>, stop: Option<Token>) {
+        while self.push_intermediate(inters, stop) {}
+    }
+
     fn next_expression(&mut self, stop: Option<Token>) -> Expression<'a> {
         let mut inters = Vec::new();
-        while let Some(inter) = self.next_intermediate(stop) {
-            inters.push(inter);
-        }
+        self.extend_intermediates(&mut inters, stop);
         inters.into()
     }
 
@@ -412,9 +440,7 @@ impl<'a> Parser<'a> {
         let mut inters = Vec::new();
         let mut wraps = 0;
         loop {
-            while let Some(inter) = self.next_intermediate(None) {
-                inters.push(inter);
-            }
+            self.extend_intermediates(&mut inters, None);
             match self.advance() {
                 Some((close, Token::CloseBracket)) => {
                     // cap the invisible-group nesting so the tree stays bounded; drop excess closes
@@ -481,6 +507,10 @@ fn split_column_lines(
 }
 
 /// Parse a tokenized expression
+///
+/// # Panics
+///
+/// If two [`Token::Space`] tokens are next to each other.
 pub fn parse_tokens<'a, T>(tokens: T) -> Expression<'a>
 where
     T: IntoIterator<Item = (&'a str, Token)>,
@@ -629,9 +659,13 @@ mod tests {
     #[test]
     fn open_close_nonempty() {
         let expr = super::parse("| |");
-        let expected = [Simple::Symbol("|"), Simple::Symbol("|")]
-            .into_iter()
-            .collect();
+        let expected = [
+            Intermediate::from(Simple::Symbol("|")),
+            Intermediate::Space(" "),
+            Simple::Symbol("|").into(),
+        ]
+        .into_iter()
+        .collect();
         assert_eq!(expr, expected);
     }
 
@@ -671,7 +705,7 @@ mod tests {
     #[test]
     fn negated_scripts() {
         let negated = |operand| Group::from_iter("", [Simple::Operator("-"), operand], "");
-        let expr = super::parse("x^-1 e^-x y_-1^-2");
+        let expr = super::parse("x^-1e^-xy_-1^-2");
         let expected = Expression::from_iter([
             SimpleScript::with_super(Simple::Ident("x"), negated(Simple::Number("1"))),
             SimpleScript::with_super(Simple::Ident("e"), negated(Simple::Ident("x"))),
@@ -681,6 +715,74 @@ mod tests {
                 negated(Simple::Number("2")),
             ),
         ]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    #[should_panic(expected = "two space tokens in a row")]
+    fn neighboring_space_tokens_panic() {
+        let _ = super::parse_tokens([(" ", crate::Token::Space), (" ", crate::Token::Space)]);
+    }
+
+    #[test]
+    fn spaces_between_intermediates_are_kept() {
+        let expr = super::parse(" a  + b ");
+        let expected = Expression::from_iter([
+            Intermediate::from(Simple::Ident("a")),
+            Intermediate::Space("  "),
+            Simple::Operator("+").into(),
+            Intermediate::Space(" "),
+            Simple::Ident("b").into(),
+        ]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn spaces_inside_an_intermediate_are_dropped() {
+        let expr = super::parse("a / b sin x ^ 2");
+        let expected = Expression::from_iter([
+            Intermediate::from(Frac::new(Simple::Ident("a"), Simple::Ident("b"))),
+            Intermediate::Space(" "),
+            Func::without_scripts(
+                "sin",
+                SimpleScript::with_super(Simple::Ident("x"), Simple::Number("2")),
+            )
+            .into(),
+        ]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn spaces_are_kept_inside_groups_and_matrix_cells() {
+        let expr = super::parse("( a b )");
+        let expected = Expression::from_iter([Group::from_iter(
+            "(",
+            [
+                Intermediate::from(Simple::Ident("a")),
+                Intermediate::Space(" "),
+                Simple::Ident("b").into(),
+            ],
+            ")",
+        )]);
+        assert_eq!(expr, expected);
+
+        let expr = super::parse("[[a b, c], [d, e]]");
+        let cell = |ident| Expression::from_iter([Simple::Ident(ident)]);
+        let expected = Expression::from_iter([Matrix::new(
+            "[",
+            [
+                Expression::from_iter([
+                    Intermediate::from(Simple::Ident("a")),
+                    Intermediate::Space(" "),
+                    Simple::Ident("b").into(),
+                ]),
+                cell("c"),
+                cell("d"),
+                cell("e"),
+            ],
+            2,
+            "]",
+        )]);
         assert_eq!(expr, expected);
     }
 
@@ -806,27 +908,36 @@ mod tests {
     fn sets_as_groups() {
         // as in asciimath, rows of "(" in "{...}" are a set of tuples
         let expr = super::parse("{(x, y), (a, b)}");
-        let expected = [Group::from_iter(
+        let first = Group::from_iter(
+            "(",
+            [
+                Intermediate::from(Simple::Ident("x")),
+                Simple::Symbol(",").into(),
+                Intermediate::Space(" "),
+                Simple::Ident("y").into(),
+            ],
+            ")",
+        );
+        let second = Group::from_iter(
+            "(",
+            [
+                Intermediate::from(Simple::Ident("a")),
+                Simple::Symbol(",").into(),
+                Intermediate::Space(" "),
+                Simple::Ident("b").into(),
+            ],
+            ")",
+        );
+        let expected = Expression::from_iter([Group::from_iter(
             "{",
             [
-                Group::from_iter(
-                    "(",
-                    [Simple::Ident("x"), Simple::Symbol(","), Simple::Ident("y")],
-                    ")",
-                )
-                .into(),
-                Simple::Symbol(","),
-                Group::from_iter(
-                    "(",
-                    [Simple::Ident("a"), Simple::Symbol(","), Simple::Ident("b")],
-                    ")",
-                )
-                .into(),
+                Intermediate::from(Simple::from(first)),
+                Simple::Symbol(",").into(),
+                Intermediate::Space(" "),
+                Simple::from(second).into(),
             ],
             "}",
-        )]
-        .into_iter()
-        .collect();
+        )]);
         assert_eq!(expr, expected);
     }
 
@@ -871,13 +982,15 @@ mod tests {
     fn open_close_multiple_intermediates() {
         // a left-right bracket group with more than one intermediate inside
         let expr = super::parse("|a b|");
-        let expected = [Group::from_iter(
+        let expected = Expression::from_iter([Group::from_iter(
             "|",
-            [Simple::Ident("a"), Simple::Ident("b")],
+            [
+                Intermediate::from(Simple::Ident("a")),
+                Intermediate::Space(" "),
+                Simple::Ident("b").into(),
+            ],
             "|",
-        )]
-        .into_iter()
-        .collect();
+        )]);
         assert_eq!(expr, expected);
     }
 
@@ -1061,22 +1174,27 @@ mod tests {
     fn ragged_matrix_is_group() {
         // mismatched column counts mean the second row doesn't match, so it isn't a matrix
         let expr = super::parse("[[a, b], [c]]");
-        let expected = [Group::from_iter(
+        let first = Group::from_iter(
             "[",
             [
-                Group::from_iter(
-                    "[",
-                    [Simple::Ident("a"), Simple::Symbol(","), Simple::Ident("b")],
-                    "]",
-                )
-                .into(),
-                Simple::Symbol(","),
-                Group::from_iter("[", [Simple::Ident("c")], "]").into(),
+                Intermediate::from(Simple::Ident("a")),
+                Simple::Symbol(",").into(),
+                Intermediate::Space(" "),
+                Simple::Ident("b").into(),
             ],
             "]",
-        )]
-        .into_iter()
-        .collect();
+        );
+        let second = Group::from_iter("[", [Simple::Ident("c")], "]");
+        let expected = Expression::from_iter([Group::from_iter(
+            "[",
+            [
+                Intermediate::from(Simple::from(first)),
+                Simple::Symbol(",").into(),
+                Intermediate::Space(" "),
+                Simple::from(second).into(),
+            ],
+            "]",
+        )]);
         assert_eq!(expr, expected);
     }
 
@@ -1102,16 +1220,16 @@ mod tests {
     fn matrix_candidate_with_trailing_tokens_is_group() {
         // a row followed by a non-separator token can't be a matrix, so it stays a group
         let expr = super::parse("[[a] b]");
-        let expected = [Group::from_iter(
+        let row = Group::from_iter("[", [Simple::Ident("a")], "]");
+        let expected = Expression::from_iter([Group::from_iter(
             "[",
             [
-                Group::from_iter("[", [Simple::Ident("a")], "]").into(),
-                Simple::Ident("b"),
+                Intermediate::from(Simple::from(row)),
+                Intermediate::Space(" "),
+                Simple::Ident("b").into(),
             ],
             "]",
-        )]
-        .into_iter()
-        .collect();
+        )]);
         assert_eq!(expr, expected);
     }
 

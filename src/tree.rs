@@ -664,6 +664,11 @@ pub enum Intermediate<'a> {
     ScriptFunc(ScriptFunc<'a>),
     /// A fraction between scripted objects
     Frac(Frac<'a>),
+    /// The whitespace typed between two neighboring intermediates of an [`Expression`]
+    ///
+    /// Whitespace anywhere else, like around the `/` of a fraction or before a function's
+    /// argument, isn't kept.
+    Space(&'a str),
 }
 
 impl Default for Intermediate<'_> {
