@@ -1,6 +1,6 @@
 use crate::tree::{
-    Expression, Frac, Func, Group, Intermediate, Matrix, Script, ScriptFunc, Simple, SimpleBinary,
-    SimpleFunc, SimpleScript, SimpleUnary,
+    Expression, Frac, Func, Group, Intermediate, Matrix, Script, ScriptFunc, Signed, Simple,
+    SimpleBinary, SimpleFunc, SimpleScript, SimpleSigned, SimpleUnary,
 };
 use crate::{Token, Tokenizer};
 use std::collections::HashSet;
@@ -104,7 +104,36 @@ impl<'a> Parser<'a> {
         item
     }
 
-    fn next_simple(&mut self, stop: Option<Token>) -> Option<Simple<'a>> {
+    /// Whether the [sign][Token::Sign] at `index` prefixes the operand after it rather than
+    /// joining the operands around it.
+    ///
+    /// A sign prefixes what follows it exactly when what sits to its left isn't a complete
+    /// operand: nothing at all, because the sign starts the input, a group, or an argument;
+    /// another operator or sign; a separator; an opening bracket; or a part still waiting for an
+    /// argument, like `sqrt`, a script marker, or the `/` of a fraction. Everything else to the
+    /// left is a target the sign joins, which makes it binary: an identifier, a number, a symbol,
+    /// a group or matrix that just closed, and a part carrying scripts, so the `-` of `x^2 - 1`
+    /// subtracts.
+    ///
+    /// `at_start` says the sign begins what the caller is parsing, which is how the sign of
+    /// `(-x)` or of `root 3 -x` has nothing to its left even though an entry precedes it.
+    fn is_prefix_sign(&self, index: usize, at_start: bool) -> bool {
+        if at_start || index == 0 {
+            true
+        } else {
+            !matches!(
+                self.entries[index - 1].token,
+                Token::Number
+                    | Token::Text
+                    | Token::Ident
+                    | Token::Symbol
+                    | Token::CloseBracket
+                    | Token::OpenCloseBracket
+            )
+        }
+    }
+
+    fn next_simple(&mut self, stop: Option<Token>, at_start: bool) -> Option<Simple<'a>> {
         if self.depth >= MAX_DEPTH {
             return None;
         }
@@ -120,17 +149,22 @@ impl<'a> Parser<'a> {
             Some((ident, Token::Ident)) => Some(Simple::Ident(ident)),
             Some((operator, Token::Operator)) => Some(Simple::Operator(operator)),
             Some((symb, Token::Symbol)) => Some(Simple::Symbol(symb)),
-            Some((unary, Token::Unary)) => {
-                Some(SimpleUnary::new(unary, self.next_simple(None).unwrap_or_default()).into())
-            }
+            Some((sign, Token::Sign)) => Some(if self.is_prefix_sign(mark, at_start) {
+                SimpleSigned::new(sign, self.next_simple(stop, true).unwrap_or_default()).into()
+            } else {
+                Simple::Sign(sign)
+            }),
+            Some((unary, Token::Unary)) => Some(
+                SimpleUnary::new(unary, self.next_simple(None, true).unwrap_or_default()).into(),
+            ),
             Some((func, Token::Function)) => {
-                Some(SimpleFunc::new(func, self.next_simple(None).unwrap_or_default()).into())
+                Some(SimpleFunc::new(func, self.next_simple(None, true).unwrap_or_default()).into())
             }
             Some((binary, Token::Binary)) => Some(
                 SimpleBinary::new(
                     binary,
-                    self.next_simple(None).unwrap_or_default(),
-                    self.next_simple(None).unwrap_or_default(),
+                    self.next_simple(None, true).unwrap_or_default(),
+                    self.next_simple(None, true).unwrap_or_default(),
                 )
                 .into(),
             ),
@@ -233,7 +267,7 @@ impl<'a> Parser<'a> {
             matrix.into()
         } else if self.failed_opens.contains(&(open_index, stop)) {
             Simple::Symbol(open)
-        } else if let Some(first) = self.next_intermediate(stop) {
+        } else if let Some(first) = self.next_intermediate(stop, true) {
             // take the first intermediate, even if it's another OpenCloseBracket
             let mut inters = vec![first];
             // any other left-right bracket, e.g. "|" inside "||", opens its own group
@@ -279,7 +313,8 @@ impl<'a> Parser<'a> {
         stop: Option<Token>,
     ) -> bool {
         let space = self.entries.get(self.pos).map_or("", |entry| entry.space);
-        if let Some(inter) = self.next_intermediate(stop) {
+        let at_start = inters.is_empty();
+        if let Some(inter) = self.next_intermediate(stop, at_start) {
             if !space.is_empty() && !inters.is_empty() {
                 inters.push(Intermediate::Space(space));
             }
@@ -348,32 +383,9 @@ impl<'a> Parser<'a> {
         Some((open, data, num_cols))
     }
 
-    /// Parse a `-` prefixing the following simple into an unbracketed group.
-    ///
-    /// Following asciimath, only called right after `^`, `_`, or `/`, so `x^-1` scripts `-1`
-    /// while `a-1` stays a subtraction. Returns `None` without consuming if the next token isn't
-    /// `-`, and just the `-` if nothing follows it.
-    fn next_negated(&mut self) -> Option<Simple<'a>> {
-        let mark = self.pos;
-        let minus = match self.advance() {
-            Some((minus @ "-", Token::Operator)) => Simple::Operator(minus),
-            Some((minus @ "-", Token::Symbol)) => Simple::Symbol(minus),
-            _ => {
-                self.pos = mark; // rewind
-                return None;
-            }
-        };
-        match self.next_simple(None) {
-            Some(operand) => Some(Group::from_iter("", [minus, operand], "").into()),
-            None => Some(minus),
-        }
-    }
-
     /// The argument of a sub- or superscript.
     fn next_script_arg(&mut self) -> Simple<'a> {
-        self.next_negated()
-            .or_else(|| self.next_simple(None))
-            .unwrap_or_default()
+        self.next_simple(None, true).unwrap_or_default()
     }
 
     fn next_script(&mut self) -> Script<'a> {
@@ -397,38 +409,43 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn next_script_func(&mut self, stop: Option<Token>) -> Option<ScriptFunc<'a>> {
+    fn next_script_func(&mut self, stop: Option<Token>, at_start: bool) -> Option<ScriptFunc<'a>> {
         if self.depth >= MAX_DEPTH {
             return None;
         }
         self.depth += 1;
         let mark = self.pos;
-        let result = if let Some((func, Token::Function)) = self.advance() {
-            Some(
+        let result = match self.advance() {
+            Some((func, Token::Function)) => Some(
                 Func::new(
                     func,
                     self.next_script(),
-                    self.next_script_func(None).unwrap_or_default(),
+                    self.next_script_func(None, true).unwrap_or_default(),
                 )
                 .into(),
-            )
-        } else {
-            self.pos = mark; // rewind
-            self.next_simple(stop)
-                .map(|simp| SimpleScript::new(simp, self.next_script()).into())
+            ),
+            Some((sign, Token::Sign)) if self.is_prefix_sign(mark, at_start) => Some(
+                Signed::new(sign, self.next_script_func(stop, true).unwrap_or_default()).into(),
+            ),
+            _ => {
+                self.pos = mark; // rewind
+                self.next_simple(stop, at_start)
+                    .map(|simp| SimpleScript::new(simp, self.next_script()).into())
+            }
         };
         self.depth -= 1;
         result
     }
 
-    fn next_intermediate(&mut self, stop: Option<Token>) -> Option<Intermediate<'a>> {
-        let base = self.next_script_func(stop)?;
+    fn next_intermediate(
+        &mut self,
+        stop: Option<Token>,
+        at_start: bool,
+    ) -> Option<Intermediate<'a>> {
+        let base = self.next_script_func(stop, at_start)?;
         let mark = self.pos;
         if let Some((_, Token::Frac)) = self.advance() {
-            let denominator = match self.next_negated() {
-                Some(negated) => SimpleScript::new(negated, self.next_script()).into(),
-                None => self.next_script_func(None).unwrap_or_default(),
-            };
+            let denominator = self.next_script_func(None, true).unwrap_or_default();
             Some(Intermediate::Frac(Frac::new(base, denominator)))
         } else {
             self.pos = mark; // rewind
@@ -529,8 +546,8 @@ pub fn parse(inp: &str) -> Expression<'_> {
 #[cfg(test)]
 mod tests {
     use crate::tree::{
-        Expression, Frac, Func, Group, Intermediate, Matrix, ScriptFunc, Simple, SimpleBinary,
-        SimpleFunc, SimpleScript, SimpleUnary,
+        Expression, Frac, Func, Group, Intermediate, Matrix, ScriptFunc, Signed, Simple,
+        SimpleBinary, SimpleFunc, SimpleScript, SimpleSigned, SimpleUnary,
     };
 
     #[test]
@@ -678,13 +695,18 @@ mod tests {
 
     #[test]
     fn open_close_closes_on_same_bracket() {
+        // the "+" prefixes the "|" after it, which then can't pair, so both are their own part
         let expr = super::parse("||a| + |b||");
         let expected = Expression::from_iter([Group::from_iter(
             "||",
             [
-                Simple::Ident("a"),
-                Group::from_iter("|", [Simple::Operator("+")], "|").into(),
-                Simple::Ident("b"),
+                Intermediate::from(Simple::Ident("a")),
+                Simple::Symbol("|").into(),
+                Intermediate::Space(" "),
+                Simple::Sign("+").into(),
+                Intermediate::Space(" "),
+                Simple::Symbol("|").into(),
+                Simple::Ident("b").into(),
             ],
             "||",
         )]);
@@ -703,18 +725,26 @@ mod tests {
     }
 
     #[test]
-    fn negated_scripts() {
-        let negated = |operand| Group::from_iter("", [Simple::Operator("-"), operand], "");
+    fn signs_in_scripts() {
+        let signed = |operand| SimpleSigned::new("-", operand);
         let expr = super::parse("x^-1e^-xy_-1^-2");
         let expected = Expression::from_iter([
-            SimpleScript::with_super(Simple::Ident("x"), negated(Simple::Number("1"))),
-            SimpleScript::with_super(Simple::Ident("e"), negated(Simple::Ident("x"))),
+            SimpleScript::with_super(Simple::Ident("x"), signed(Simple::Number("1"))),
+            SimpleScript::with_super(Simple::Ident("e"), signed(Simple::Ident("x"))),
             SimpleScript::with_subsuper(
                 Simple::Ident("y"),
-                negated(Simple::Number("1")),
-                negated(Simple::Number("2")),
+                signed(Simple::Number("1")),
+                signed(Simple::Number("2")),
             ),
         ]);
+        assert_eq!(expr, expected);
+
+        // a bracketed script is a group, so the sign inside it binds scripts again
+        let expr = super::parse("x_(-1)");
+        let expected = Expression::from_iter([SimpleScript::with_sub(
+            Simple::Ident("x"),
+            Group::from_iter("(", [Signed::new("-", Simple::Number("1"))], ")"),
+        )]);
         assert_eq!(expr, expected);
     }
 
@@ -730,7 +760,7 @@ mod tests {
         let expected = Expression::from_iter([
             Intermediate::from(Simple::Ident("a")),
             Intermediate::Space("  "),
-            Simple::Operator("+").into(),
+            Simple::Sign("+").into(),
             Intermediate::Space(" "),
             Simple::Ident("b").into(),
         ]);
@@ -787,52 +817,302 @@ mod tests {
     }
 
     #[test]
-    fn negated_function_script() {
+    fn sign_in_function_script() {
         let expr = super::parse("sin^-1 x");
         let expected = Expression::from_iter([Func::with_super(
             "sin",
-            Group::from_iter("", [Simple::Operator("-"), Simple::Number("1")], ""),
+            SimpleSigned::new("-", Simple::Number("1")),
             Simple::Ident("x"),
         )]);
         assert_eq!(expr, expected);
     }
 
     #[test]
-    fn negated_denominator() {
+    fn sign_in_denominator() {
+        let expr = super::parse("1/-2");
+        let expected = Expression::from_iter([Frac::new(
+            Simple::Number("1"),
+            Signed::new("-", Simple::Number("2")),
+        )]);
+        assert_eq!(expr, expected);
+
+        // the sign takes the scripts of what it prefixes with it
         let expr = super::parse("1/-2^3");
         let expected = Expression::from_iter([Frac::new(
             Simple::Number("1"),
-            SimpleScript::with_super(
-                Group::from_iter("", [Simple::Operator("-"), Simple::Number("2")], ""),
-                Simple::Number("3"),
+            Signed::new(
+                "-",
+                SimpleScript::with_super(Simple::Number("2"), Simple::Number("3")),
             ),
         )]);
         assert_eq!(expr, expected);
     }
 
     #[test]
-    fn lone_minus_script() {
+    fn sign_with_nothing_to_bind() {
         let expr = super::parse("(x^-)");
         let expected = Expression::from_iter([Group::from_iter(
             "(",
             [SimpleScript::with_super(
                 Simple::Ident("x"),
-                Simple::Operator("-"),
+                SimpleSigned::new("-", Simple::Missing),
             )],
             ")",
+        )]);
+        assert_eq!(expr, expected);
+
+        let expr = super::parse("(-)");
+        let expected = Expression::from_iter([Group::from_iter(
+            "(",
+            [Signed::new("-", Simple::Missing)],
+            ")",
+        )]);
+        assert_eq!(expr, expected);
+
+        // nothing to the left either, so it still prefixes a missing operand
+        let expr = super::parse("-");
+        let expected = Expression::from_iter([Signed::new("-", Simple::Missing)]);
+        assert_eq!(expr, expected);
+
+        // a target to the left makes it binary, even with nothing after it
+        let expr = super::parse("x -");
+        let expected = Expression::from_iter([
+            Intermediate::from(Simple::Ident("x")),
+            Intermediate::Space(" "),
+            Simple::Sign("-").into(),
+        ]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn binary_sign_joins_its_operands() {
+        let expr = super::parse("a-1");
+        let expected =
+            Expression::from_iter([Simple::Ident("a"), Simple::Sign("-"), Simple::Number("1")]);
+        assert_eq!(expr, expected);
+
+        // scripts make a target too
+        let expr = super::parse("x^2-1");
+        let expected = Expression::from_iter([
+            Intermediate::from(SimpleScript::with_super(
+                Simple::Ident("x"),
+                Simple::Number("2"),
+            )),
+            Simple::Sign("-").into(),
+            Simple::Number("1").into(),
+        ]);
+        assert_eq!(expr, expected);
+
+        // so does a group, a matrix, or a left-right group that just closed
+        for input in ["(a)-b", "[[a, b], [c, d]]-e", "|a|-b"] {
+            let expr = super::parse(input);
+            assert!(
+                format!("{expr:?}").contains("Sign(\"-\")"),
+                "{input}: {expr:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sign_starts_an_expression() {
+        let expr = super::parse("-x");
+        let expected = Expression::from_iter([Signed::new("-", Simple::Ident("x"))]);
+        assert_eq!(expr, expected);
+
+        let expr = super::parse("+x");
+        let expected = Expression::from_iter([Signed::new("+", Simple::Ident("x"))]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn sign_binds_the_scripts_of_what_it_prefixes() {
+        let expr = super::parse("-x^2");
+        let expected = Expression::from_iter([Signed::new(
+            "-",
+            SimpleScript::with_super(Simple::Ident("x"), Simple::Number("2")),
+        )]);
+        assert_eq!(expr, expected);
+
+        // and is the numerator of a fraction that follows
+        let expr = super::parse("-x/y");
+        let expected = Expression::from_iter([Frac::new(
+            Signed::new("-", Simple::Ident("x")),
+            Simple::Ident("y"),
         )]);
         assert_eq!(expr, expected);
     }
 
     #[test]
-    fn binary_minus_unchanged() {
-        let expr = super::parse("a-1");
+    fn sign_after_an_opening_bracket() {
+        for (input, left, right) in [
+            ("(-x)", "(", ")"),
+            ("[-x]", "[", "]"),
+            ("{-x}", "{", "}"),
+            ("{:-x:}", "{:", ":}"),
+            ("|-x|", "|", "|"),
+        ] {
+            let expected = Expression::from_iter([Group::from_iter(
+                left,
+                [Signed::new("-", Simple::Ident("x"))],
+                right,
+            )]);
+            assert_eq!(super::parse(input), expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn sign_after_a_separator() {
+        let expr = super::parse("a, -b");
         let expected = Expression::from_iter([
-            Simple::Ident("a"),
-            Simple::Operator("-"),
-            Simple::Number("1"),
+            Intermediate::from(Simple::Ident("a")),
+            Simple::Symbol(",").into(),
+            Intermediate::Space(" "),
+            Signed::new("-", Simple::Ident("b")).into(),
         ]);
         assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn sign_in_a_matrix_cell() {
+        let expr = super::parse("[(-a, b), (c, -d)]");
+        let signed = |ident| Expression::from_iter([Signed::new("-", Simple::Ident(ident))]);
+        let expected = Expression::from_iter([Matrix::new(
+            "[",
+            [
+                signed("a"),
+                Expression::from_iter([Simple::Ident("b")]),
+                Expression::from_iter([Simple::Ident("c")]),
+                signed("d"),
+            ],
+            2,
+            "]",
+        )]);
+        assert_eq!(expr, expected);
+
+        // a cell holding nothing but a sign doesn't swallow the separator after it
+        let expr = super::parse("[(a, -, b), (c, d, e)]");
+        let expected = Expression::from_iter([Matrix::new(
+            "[",
+            [
+                Expression::from_iter([Simple::Ident("a")]),
+                Expression::from_iter([Signed::new("-", Simple::Missing)]),
+                Expression::from_iter([Simple::Ident("b")]),
+                Expression::from_iter([Simple::Ident("c")]),
+                Expression::from_iter([Simple::Ident("d")]),
+                Expression::from_iter([Simple::Ident("e")]),
+            ],
+            3,
+            "]",
+        )]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn sign_after_an_operator_or_another_sign() {
+        let expr = super::parse("a ! -b");
+        let expected = Expression::from_iter([
+            Intermediate::from(Simple::Ident("a")),
+            Intermediate::Space(" "),
+            Simple::Operator("!").into(),
+            Intermediate::Space(" "),
+            Signed::new("-", Simple::Ident("b")).into(),
+        ]);
+        assert_eq!(expr, expected);
+
+        let expr = super::parse("- - x");
+        let expected =
+            Expression::from_iter([Signed::new("-", Signed::new("-", Simple::Ident("x")))]);
+        assert_eq!(expr, expected);
+
+        let expr = super::parse("1 - - x");
+        let expected = Expression::from_iter([
+            Intermediate::from(Simple::Number("1")),
+            Intermediate::Space(" "),
+            Simple::Sign("-").into(),
+            Intermediate::Space(" "),
+            Signed::new("-", Simple::Ident("x")).into(),
+        ]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn sign_after_a_function_name() {
+        let expr = super::parse("sin -x");
+        let expected = Expression::from_iter([Func::without_scripts(
+            "sin",
+            Signed::new("-", Simple::Ident("x")),
+        )]);
+        assert_eq!(expr, expected);
+
+        // the function still needs an argument after its scripts
+        let expr = super::parse("sin^2 -x");
+        let expected = Expression::from_iter([Func::with_super(
+            "sin",
+            Simple::Number("2"),
+            Signed::new("-", Simple::Ident("x")),
+        )]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn sign_after_a_symbol_is_binary() {
+        // a big operator is a symbol like any other, so the sign joins it
+        for input in ["sum -x", "sum_1^2 -x"] {
+            let expr = super::parse(input);
+            assert!(
+                format!("{expr:?}").contains("Sign(\"-\")"),
+                "{input}: {expr:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sign_spellings_from_the_symbol_table() {
+        let expr = super::parse("a pm b");
+        let expected = Expression::from_iter([
+            Intermediate::from(Simple::Ident("a")),
+            Intermediate::Space(" "),
+            Simple::Sign("pm").into(),
+            Intermediate::Space(" "),
+            Simple::Ident("b").into(),
+        ]);
+        assert_eq!(expr, expected);
+
+        let expr = super::parse("a, pm b");
+        let expected = Expression::from_iter([
+            Intermediate::from(Simple::Ident("a")),
+            Simple::Symbol(",").into(),
+            Intermediate::Space(" "),
+            Signed::new("pm", Simple::Ident("b")).into(),
+        ]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn sign_prefixes_a_simple_argument() {
+        let expr = super::parse("sqrt -x");
+        let expected = Expression::from_iter([SimpleUnary::new(
+            "sqrt",
+            SimpleSigned::new("-", Simple::Ident("x")),
+        )]);
+        assert_eq!(expr, expected);
+
+        // the second argument of a binary operator has nothing to its left either
+        let expr = super::parse("root 3 -x");
+        let expected = Expression::from_iter([SimpleBinary::new(
+            "root",
+            Simple::Number("3"),
+            SimpleSigned::new("-", Simple::Ident("x")),
+        )]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn deep_sign_chain_does_not_overflow() {
+        // each sign prefixes the next, so a long run recurses (via next_script_func)
+        let input = "-".repeat(100_000);
+        let expr = super::parse(&input);
+        assert!(!expr.is_empty());
     }
 
     #[test]
