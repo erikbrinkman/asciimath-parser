@@ -59,15 +59,25 @@
 //! E ::= IE | I/I                             Expression
 //! ```
 //!
+//! Every symbol the token map defines arrives with a [class][SymbolClass] saying what it is, so
+//! that whatever reads the tree can space it without keeping a table of spellings: whether it is
+//! written as a run of letters, like `dx` or `mod`, which can't be written against another such run
+//! without the two reading as one name; whether it joins the operands on either side of it, like
+//! `=` or `xx`; whether it wants the operand after it, like `sum` or `lim`; whether it is space,
+//! like `quad`; or whether it is the separator. An [`Ident`][tree::Simple::Ident] is then a bare
+//! variable, a single character under the default tokenizer, and never a name. A big operator keeps
+//! its scripts and leaves the operand after it as the next part of the expression, as it always
+//! has, while `sin` and the other [functions][Token::Function] still take theirs.
+//!
 //! A [sign][Token::Sign] — `+`, `-`, or a spelling like `+-` or `pm` — either joins the operands
 //! around it or prefixes the one after it, and the parse settles which. It prefixes what follows
 //! exactly when what sits to its left isn't a complete operand: nothing at all, because the sign
-//! starts the input, a group, or an argument; another operator or sign; a separator; an opening
-//! bracket; or a part still waiting for an argument, like `sqrt`, a script marker, or the `/` of a
-//! fraction. Everything else to the left is a target it joins, so `x^2 - 1` subtracts while `x^-1`
-//! has the superscript `-1`. A prefixing sign comes out with its operand as one
-//! [`Signed`][tree::Signed] part, scripts included, so `-x^2` is a single signed operand; a joining
-//! sign is a [`Sign`][tree::Simple::Sign] of its own.
+//! starts the input, a group, or an argument; another operator or sign; or a symbol that wants an
+//! operand of its own, which is anything that joins the operands around it, wants the one after it,
+//! separates, or is space. Everything else to the left is a target it joins, so `x^2 - 1` subtracts
+//! while `x = -y` and `sum -x` both prefix and `x^-1` has the superscript `-1`. A prefixing sign
+//! comes out with its operand as one [`Signed`][tree::Signed] part, scripts included, so `-x^2` is
+//! a single signed operand; a joining sign is a [`Sign`][tree::Simple::Sign] of its own.
 //!
 //! Left-right brackets are closed greedily, and must match the same string on both sides. If they
 //! can't be matched they'll be parsed as a symbol. This is particularly useful for probability
@@ -118,11 +128,11 @@
 //!    ```
 //! 3. Nonstandard tokens can be used instead by creating custom token maps:
 //!    ```
-//!    use asciimath_parser::{parse_tokens, Tokenizer, Token};
+//!    use asciimath_parser::{parse_tokens, SymbolClass, Tokenizer, Token};
 //!    use asciimath_parser::prefix_map::HashPrefixMap;
 //!
 //!    let token_map = HashPrefixMap::from_iter([
-//!        ("@", Token::Symbol),
+//!        ("@", Token::Symbol(SymbolClass::Joining)),
 //!        // ...
 //!    ]);
 //!    let parsed = parse_tokens(Tokenizer::with_tokens("...", &token_map, true));
@@ -188,4 +198,4 @@ mod tokenizer;
 pub mod tree;
 
 pub use parse::{parse, parse_tokens};
-pub use tokenizer::{ASCIIMATH_TOKENS, Token, Tokenizer};
+pub use tokenizer::{ASCIIMATH_TOKENS, SymbolClass, Token, Tokenizer};
