@@ -9,14 +9,34 @@
 //! - [`Func`] - A function like `sin` that can contain independent super- and subscripts
 //!   prior to its argument
 //! - [`SimpleScript`] - A simple expression that has super- and subscripts
-//! - [`Simple`] - A simple expression like a [`Symbol`][Simple::Symbol] or
-//!   [`Ident`][Simple::Ident]ifier
+//! - [`Simple`] - A simple expression like a [`Symbol`] or [`Ident`][Simple::Ident]ifier
 //!
 //! The exceptions to this hierarchy are [`Group`] and [`Matrix`] that "reset" the hierarchy by
 //! wrapping expressions.
+use crate::tokenizer::SymbolClass;
 use std::iter::FusedIterator;
 use std::ops::{Deref, Index};
 use std::slice::ChunksExact;
+
+/// A defined symbol with the class that says how it spaces, like the `=` of `a = b`
+///
+/// The class comes from the token map, so a symbol can be spaced without looking its text up
+/// again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Symbol<'a> {
+    /// The symbol text
+    pub text: &'a str,
+    /// What the symbol is
+    pub class: SymbolClass,
+}
+
+impl<'a> Symbol<'a> {
+    /// Create a symbol from its text and class
+    #[must_use]
+    pub const fn new(text: &'a str, class: SymbolClass) -> Self {
+        Symbol { text, class }
+    }
+}
 
 /// A unary operator like "sqrt"
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -401,12 +421,16 @@ pub enum Simple<'a> {
     Number(&'a str),
     /// Raw text
     Text(&'a str),
-    /// An identity, usually a single character of something that doesn't have asciimath meaning
+    /// A bare variable, a single character under the default tokenizer
+    ///
+    /// A multi-letter entry the token map defines, like `dx`, is a
+    /// [`Name`][crate::SymbolClass::Name] symbol instead, so a one-letter variable and a name
+    /// never arrive the same way.
     Ident(&'a str),
-    /// An unrecognized operator, like `!`, from characters with no letters or digits
+    /// An unrecognized operator, like `?`, from characters with no letters or digits
     Operator(&'a str),
-    /// A recognized symbol
-    Symbol(&'a str),
+    /// A recognized symbol and its class
+    Symbol(Symbol<'a>),
     /// A sign joining the operands on either side of it, like the `-` of `a - b`
     ///
     /// A sign with nothing after it to bind, like the `-` of `a -`, is also this.
@@ -447,6 +471,7 @@ macro_rules! simple_from {
     };
 }
 
+simple_from!(Symbol<'a> => Symbol);
 simple_from!(SimpleUnary<'a> => Unary);
 simple_from!(SimpleSigned<'a> => Signed);
 simple_from!(SimpleFunc<'a> => Func);
@@ -809,8 +834,16 @@ where
 mod tests {
     use super::{
         Expression, Frac, Func, Group, Intermediate, Matrix, Script, ScriptFunc, Signed, Simple,
-        SimpleBinary, SimpleFunc, SimpleScript, SimpleSigned, SimpleUnary,
+        SimpleBinary, SimpleFunc, SimpleScript, SimpleSigned, SimpleUnary, Symbol, SymbolClass,
     };
+
+    #[test]
+    fn symbol() {
+        let symbol = Symbol::new("=", SymbolClass::Joining);
+        assert_eq!(symbol.text, "=");
+        assert_eq!(symbol.class, SymbolClass::Joining);
+        assert_eq!(Simple::from(symbol), Simple::Symbol(symbol));
+    }
 
     #[test]
     fn simple_unary() {

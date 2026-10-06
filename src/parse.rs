@@ -1,8 +1,8 @@
 use crate::tree::{
     Expression, Frac, Func, Group, Intermediate, Matrix, Script, ScriptFunc, Signed, Simple,
-    SimpleBinary, SimpleFunc, SimpleScript, SimpleSigned, SimpleUnary,
+    SimpleBinary, SimpleFunc, SimpleScript, SimpleSigned, SimpleUnary, Symbol,
 };
-use crate::{Token, Tokenizer};
+use crate::{SymbolClass, Token, Tokenizer};
 use std::collections::HashSet;
 
 /// The maximum recursion depth before deeper structure is treated as [missing][Simple::Missing].
@@ -104,36 +104,11 @@ impl<'a> Parser<'a> {
         item
     }
 
-    /// Whether the [sign][Token::Sign] at `index` prefixes the operand after it rather than
-    /// joining the operands around it.
+    /// Parse the next simple expression.
     ///
-    /// A sign prefixes what follows it exactly when what sits to its left isn't a complete
-    /// operand: nothing at all, because the sign starts the input, a group, or an argument;
-    /// another operator or sign; a separator; an opening bracket; or a part still waiting for an
-    /// argument, like `sqrt`, a script marker, or the `/` of a fraction. Everything else to the
-    /// left is a target the sign joins, which makes it binary: an identifier, a number, a symbol,
-    /// a group or matrix that just closed, and a part carrying scripts, so the `-` of `x^2 - 1`
-    /// subtracts.
-    ///
-    /// `at_start` says the sign begins what the caller is parsing, which is how the sign of
-    /// `(-x)` or of `root 3 -x` has nothing to its left even though an entry precedes it.
-    fn is_prefix_sign(&self, index: usize, at_start: bool) -> bool {
-        if at_start || index == 0 {
-            true
-        } else {
-            !matches!(
-                self.entries[index - 1].token,
-                Token::Number
-                    | Token::Text
-                    | Token::Ident
-                    | Token::Symbol
-                    | Token::CloseBracket
-                    | Token::OpenCloseBracket
-            )
-        }
-    }
-
-    fn next_simple(&mut self, stop: Option<Token>, at_start: bool) -> Option<Simple<'a>> {
+    /// `prefix_sign` says whether a sign here prefixes the operand after it, which
+    /// [`ends_operand`] settles for the caller.
+    fn next_simple(&mut self, stop: Option<Token>, prefix_sign: bool) -> Option<Simple<'a>> {
         if self.depth >= MAX_DEPTH {
             return None;
         }
@@ -148,8 +123,8 @@ impl<'a> Parser<'a> {
             Some((text, Token::Text)) => Some(Simple::Text(text)),
             Some((ident, Token::Ident)) => Some(Simple::Ident(ident)),
             Some((operator, Token::Operator)) => Some(Simple::Operator(operator)),
-            Some((symb, Token::Symbol)) => Some(Simple::Symbol(symb)),
-            Some((sign, Token::Sign)) => Some(if self.is_prefix_sign(mark, at_start) {
+            Some((symb, Token::Symbol(class))) => Some(Symbol::new(symb, class).into()),
+            Some((sign, Token::Sign)) => Some(if prefix_sign {
                 SimpleSigned::new(sign, self.next_simple(stop, true).unwrap_or_default()).into()
             } else {
                 Simple::Sign(sign)
@@ -177,8 +152,9 @@ impl<'a> Parser<'a> {
                 None => self.next_open_group(open).into(),
             }),
             Some((open, Token::OpenCloseBracket)) => Some(self.next_open_close_group(open, stop)),
-            Some((raw, Token::Frac | Token::Super | Token::Sub | Token::Sep)) => {
-                Some(Simple::Symbol(raw))
+            Some((sep, Token::Sep)) => Some(Symbol::new(sep, SymbolClass::Separator).into()),
+            Some((raw, Token::Frac | Token::Super | Token::Sub)) => {
+                Some(Symbol::new(raw, SymbolClass::Glyph).into())
             }
             // spaces are folded into the entry after them, so never reach here
             Some((_, Token::Space)) | None => None,
@@ -266,7 +242,7 @@ impl<'a> Parser<'a> {
         if let Some(matrix) = self.try_matrix(open) {
             matrix.into()
         } else if self.failed_opens.contains(&(open_index, stop)) {
-            Simple::Symbol(open)
+            Symbol::new(open, SymbolClass::Glyph).into()
         } else if let Some(first) = self.next_intermediate(stop, true) {
             // take the first intermediate, even if it's another OpenCloseBracket
             let mut inters = vec![first];
@@ -280,11 +256,11 @@ impl<'a> Parser<'a> {
                 // couldn't match the left-right bracket, so rewind and treat it as a symbol
                 self.pos = mark; // rewind
                 self.failed_opens.insert((open_index, stop));
-                Simple::Symbol(open)
+                Symbol::new(open, SymbolClass::Glyph).into()
             }
         } else {
             // empty so must return symbol
-            Simple::Symbol(open)
+            Symbol::new(open, SymbolClass::Glyph).into()
         }
     }
 
@@ -313,8 +289,8 @@ impl<'a> Parser<'a> {
         stop: Option<Token>,
     ) -> bool {
         let space = self.entries.get(self.pos).map_or("", |entry| entry.space);
-        let at_start = inters.is_empty();
-        if let Some(inter) = self.next_intermediate(stop, at_start) {
+        let prefix_sign = !inters.last().is_some_and(ends_operand);
+        if let Some(inter) = self.next_intermediate(stop, prefix_sign) {
             if !space.is_empty() && !inters.is_empty() {
                 inters.push(Intermediate::Space(space));
             }
@@ -409,7 +385,15 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn next_script_func(&mut self, stop: Option<Token>, at_start: bool) -> Option<ScriptFunc<'a>> {
+    /// Parse the next scripted part, which a function or a prefixing sign can head.
+    ///
+    /// `prefix_sign` says whether a sign here prefixes the operand after it, which
+    /// [`ends_operand`] settles for the caller.
+    fn next_script_func(
+        &mut self,
+        stop: Option<Token>,
+        prefix_sign: bool,
+    ) -> Option<ScriptFunc<'a>> {
         if self.depth >= MAX_DEPTH {
             return None;
         }
@@ -424,12 +408,12 @@ impl<'a> Parser<'a> {
                 )
                 .into(),
             ),
-            Some((sign, Token::Sign)) if self.is_prefix_sign(mark, at_start) => Some(
+            Some((sign, Token::Sign)) if prefix_sign => Some(
                 Signed::new(sign, self.next_script_func(stop, true).unwrap_or_default()).into(),
             ),
             _ => {
                 self.pos = mark; // rewind
-                self.next_simple(stop, at_start)
+                self.next_simple(stop, prefix_sign)
                     .map(|simp| SimpleScript::new(simp, self.next_script()).into())
             }
         };
@@ -440,9 +424,9 @@ impl<'a> Parser<'a> {
     fn next_intermediate(
         &mut self,
         stop: Option<Token>,
-        at_start: bool,
+        prefix_sign: bool,
     ) -> Option<Intermediate<'a>> {
-        let base = self.next_script_func(stop, at_start)?;
+        let base = self.next_script_func(stop, prefix_sign)?;
         let mark = self.pos;
         if let Some((_, Token::Frac)) = self.advance() {
             let denominator = self.next_script_func(None, true).unwrap_or_default();
@@ -478,12 +462,62 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// Whether a [sign][Token::Sign] after `inter` joins the operands around it rather than
+/// prefixing the one after it.
+///
+/// A sign prefixes what follows it exactly when what sits to its left isn't a complete operand:
+/// nothing at all, because the sign starts the input, a group, or an argument; another operator or
+/// sign; or a symbol that wants an operand of its own, which is anything that
+/// [joins][SymbolClass::joins_operands] the operands around it, like `=`, anything that
+/// [takes][SymbolClass::takes_operand] the one after it, like `sum`, a separator, and space
+/// written as a symbol. Everything else to the left is a target the sign joins, which makes it
+/// binary: an identifier, a number, text, a symbol that stands on its own like `alpha` or `dx`, a
+/// group or matrix, and anything that already took its own argument. Scripts belong to the part
+/// that carries them and don't answer for it, so the `-` of `x^2 - 1` subtracts while the one of
+/// `sum_1^2 -x` prefixes.
+///
+/// Whatever is still waiting for an argument, like `sqrt`, a script marker, or the `/` of a
+/// fraction, never reaches this: it parses the sign as the start of that argument.
+fn ends_operand(inter: &Intermediate<'_>) -> bool {
+    match inter {
+        Intermediate::ScriptFunc(func) => script_func_ends_operand(func),
+        Intermediate::Frac(frac) => script_func_ends_operand(&frac.denom),
+        Intermediate::Space(_) => false,
+    }
+}
+
+/// Whether a scripted part is a complete operand, for [`ends_operand`].
+fn script_func_ends_operand(func: &ScriptFunc<'_>) -> bool {
+    match func {
+        ScriptFunc::Simple(SimpleScript { simple, .. }) => simple_ends_operand(simple),
+        // a function or a prefixing sign has already taken its operand
+        ScriptFunc::Func(_) | ScriptFunc::Signed(_) => true,
+    }
+}
+
+/// Whether a simple expression is a complete operand, for [`ends_operand`].
+fn simple_ends_operand(simple: &Simple<'_>) -> bool {
+    match simple {
+        Simple::Number(_)
+        | Simple::Text(_)
+        | Simple::Ident(_)
+        | Simple::Signed(_)
+        | Simple::Unary(_)
+        | Simple::Func(_)
+        | Simple::Binary(_)
+        | Simple::Group(_)
+        | Simple::Matrix(_) => true,
+        Simple::Symbol(symbol) => matches!(symbol.class, SymbolClass::Glyph | SymbolClass::Name),
+        Simple::Missing | Simple::Operator(_) | Simple::Sign(_) => false,
+    }
+}
+
 /// Whether a matrix cell is a lone `|`, which marks a column line.
 fn is_column_line(cell: &Expression<'_>) -> bool {
     matches!(
         **cell,
         [Intermediate::ScriptFunc(ScriptFunc::Simple(SimpleScript {
-            simple: Simple::Symbol("|"),
+            simple: Simple::Symbol(Symbol { text: "|", .. }),
             script: Script::None,
         }))]
     )
@@ -545,10 +579,21 @@ pub fn parse(inp: &str) -> Expression<'_> {
 
 #[cfg(test)]
 mod tests {
+    use crate::SymbolClass;
     use crate::tree::{
         Expression, Frac, Func, Group, Intermediate, Matrix, ScriptFunc, Signed, Simple,
-        SimpleBinary, SimpleFunc, SimpleScript, SimpleSigned, SimpleUnary,
+        SimpleBinary, SimpleFunc, SimpleScript, SimpleSigned, SimpleUnary, Symbol,
     };
+
+    /// A lone `|`, which is what a left-right bracket that couldn't pair falls back to
+    fn bar<'a>() -> Simple<'a> {
+        Symbol::new("|", SymbolClass::Glyph).into()
+    }
+
+    /// The separator between matrix cells and tuple elements
+    fn comma<'a>() -> Simple<'a> {
+        Symbol::new(",", SymbolClass::Separator).into()
+    }
 
     #[test]
     fn complex_precedence() {
@@ -658,14 +703,9 @@ mod tests {
     fn close_bracket_matching() {
         let expr = super::parse("(a|b)c|d"); // "(:a|b:)c|d" not "(a|:b)c:|d"
         let expected = [
-            Group::from_iter(
-                "(",
-                [Simple::Ident("a"), Simple::Symbol("|"), Simple::Ident("b")],
-                ")",
-            )
-            .into(),
+            Group::from_iter("(", [Simple::Ident("a"), bar(), Simple::Ident("b")], ")").into(),
             Simple::Ident("c"),
-            Simple::Symbol("|"),
+            bar(),
             Simple::Ident("d"),
         ]
         .into_iter()
@@ -677,9 +717,9 @@ mod tests {
     fn open_close_nonempty() {
         let expr = super::parse("| |");
         let expected = [
-            Intermediate::from(Simple::Symbol("|")),
+            Intermediate::from(bar()),
             Intermediate::Space(" "),
-            Simple::Symbol("|").into(),
+            bar().into(),
         ]
         .into_iter()
         .collect();
@@ -701,11 +741,11 @@ mod tests {
             "||",
             [
                 Intermediate::from(Simple::Ident("a")),
-                Simple::Symbol("|").into(),
+                bar().into(),
                 Intermediate::Space(" "),
                 Simple::Sign("+").into(),
                 Intermediate::Space(" "),
-                Simple::Symbol("|").into(),
+                bar().into(),
                 Simple::Ident("b").into(),
             ],
             "||",
@@ -717,9 +757,9 @@ mod tests {
     fn open_close_mismatched_is_symbol() {
         let expr = super::parse("|a||");
         let expected = Expression::from_iter([
-            Simple::Symbol("|"),
+            bar(),
             Simple::Ident("a"),
-            Simple::Symbol("||"),
+            Simple::Symbol(Symbol::new("||", SymbolClass::Glyph)),
         ]);
         assert_eq!(expr, expected);
     }
@@ -965,7 +1005,7 @@ mod tests {
         let expr = super::parse("a, -b");
         let expected = Expression::from_iter([
             Intermediate::from(Simple::Ident("a")),
-            Simple::Symbol(",").into(),
+            comma().into(),
             Intermediate::Space(" "),
             Signed::new("-", Simple::Ident("b")).into(),
         ]);
@@ -1009,11 +1049,11 @@ mod tests {
 
     #[test]
     fn sign_after_an_operator_or_another_sign() {
-        let expr = super::parse("a ! -b");
+        let expr = super::parse("a ? -b");
         let expected = Expression::from_iter([
             Intermediate::from(Simple::Ident("a")),
             Intermediate::Space(" "),
-            Simple::Operator("!").into(),
+            Simple::Operator("?").into(),
             Intermediate::Space(" "),
             Signed::new("-", Simple::Ident("b")).into(),
         ]);
@@ -1055,15 +1095,110 @@ mod tests {
     }
 
     #[test]
-    fn sign_after_a_symbol_is_binary() {
-        // a big operator is a symbol like any other, so the sign joins it
-        for input in ["sum -x", "sum_1^2 -x"] {
+    fn sign_after_a_symbol_that_wants_an_operand_is_prefix() {
+        let expr = super::parse("x = -y");
+        let expected = Expression::from_iter([
+            Intermediate::from(Simple::Ident("x")),
+            Intermediate::Space(" "),
+            Symbol::new("=", SymbolClass::Joining).into(),
+            Intermediate::Space(" "),
+            Signed::new("-", Simple::Ident("y")).into(),
+        ]);
+        assert_eq!(expr, expected);
+
+        let expr = super::parse("sum -x");
+        let expected = Expression::from_iter([
+            Intermediate::from(Symbol::new("sum", SymbolClass::Leading)),
+            Intermediate::Space(" "),
+            Signed::new("-", Simple::Ident("x")).into(),
+        ]);
+        assert_eq!(expr, expected);
+
+        // a big operator keeps its scripts, and the sign after them still prefixes
+        let expr = super::parse("sum_1^2 -x");
+        let expected = Expression::from_iter([
+            Intermediate::from(SimpleScript::with_subsuper(
+                Symbol::new("sum", SymbolClass::Leading),
+                Simple::Number("1"),
+                Simple::Number("2"),
+            )),
+            Intermediate::Space(" "),
+            Signed::new("-", Simple::Ident("x")).into(),
+        ]);
+        assert_eq!(expr, expected);
+
+        // a joining operator written as letters, a space written as a symbol, and a separator
+        // are all the same to the rule
+        for input in [
+            "a mod -b",
+            "a quad -b",
+            "a, -b",
+            "x -> -y",
+            "not -x",
+            "a lim -b",
+            "a // -b",
+            "a \\\\ -b",
+        ] {
+            let expr = super::parse(input);
+            assert!(format!("{expr:?}").contains("Signed"), "{input}: {expr:?}");
+        }
+    }
+
+    #[test]
+    fn sign_after_a_symbol_that_stands_alone_is_binary() {
+        // a symbol that wants no operand of its own is a target like an identifier
+        for input in [
+            "alpha - 1",
+            "dx - 1",
+            "oo - 1",
+            "x' - 1",
+            "n! - 1",
+            "50% - 1",
+        ] {
             let expr = super::parse(input);
             assert!(
                 format!("{expr:?}").contains("Sign(\"-\")"),
                 "{input}: {expr:?}"
             );
         }
+    }
+
+    #[test]
+    fn symbols_carry_their_class() {
+        for (input, class) in [
+            ("alpha", SymbolClass::Glyph),
+            ("dx", SymbolClass::Name),
+            ("=", SymbolClass::Joining),
+            ("mod", SymbolClass::JoiningName),
+            ("sum", SymbolClass::Leading),
+            ("lim", SymbolClass::LeadingName),
+            ("quad", SymbolClass::Space),
+            (",", SymbolClass::Separator),
+        ] {
+            let expected = Expression::from_iter([Symbol::new(input, class)]);
+            assert_eq!(super::parse(input), expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn a_name_is_not_a_bare_variable() {
+        let expr = super::parse("x dx");
+        let expected = Expression::from_iter([
+            Intermediate::from(Simple::Ident("x")),
+            Intermediate::Space(" "),
+            Symbol::new("dx", SymbolClass::Name).into(),
+        ]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn a_script_marker_with_nothing_to_script_is_a_plain_symbol() {
+        let expr = super::parse("sqrt ^");
+        let expected = Expression::from_iter([SimpleUnary::new(
+            "sqrt",
+            Symbol::new("^", SymbolClass::Glyph),
+        )]);
+        assert_eq!(expr, expected);
     }
 
     #[test]
@@ -1081,7 +1216,7 @@ mod tests {
         let expr = super::parse("a, pm b");
         let expected = Expression::from_iter([
             Intermediate::from(Simple::Ident("a")),
-            Simple::Symbol(",").into(),
+            comma().into(),
             Intermediate::Space(" "),
             Signed::new("pm", Simple::Ident("b")).into(),
         ]);
@@ -1192,7 +1327,7 @@ mod tests {
             "(",
             [
                 Intermediate::from(Simple::Ident("x")),
-                Simple::Symbol(",").into(),
+                comma().into(),
                 Intermediate::Space(" "),
                 Simple::Ident("y").into(),
             ],
@@ -1202,7 +1337,7 @@ mod tests {
             "(",
             [
                 Intermediate::from(Simple::Ident("a")),
-                Simple::Symbol(",").into(),
+                comma().into(),
                 Intermediate::Space(" "),
                 Simple::Ident("b").into(),
             ],
@@ -1212,7 +1347,7 @@ mod tests {
             "{",
             [
                 Intermediate::from(Simple::from(first)),
-                Simple::Symbol(",").into(),
+                comma().into(),
                 Intermediate::Space(" "),
                 Simple::from(second).into(),
             ],
@@ -1254,7 +1389,8 @@ mod tests {
     #[test]
     fn bare_symbol() {
         let expr = super::parse("alpha");
-        let expected = Expression::from_iter([Simple::Symbol("alpha")]);
+        let expected =
+            Expression::from_iter([Simple::Symbol(Symbol::new("alpha", SymbolClass::Glyph))]);
         assert_eq!(expr, expected);
     }
 
@@ -1380,7 +1516,7 @@ mod tests {
 
     #[test]
     fn matrix_column_lines() {
-        let bar = || Expression::from_iter([Simple::Symbol("|")]);
+        let line = || Expression::from_iter([bar()]);
         for (input, expected) in [
             (
                 "[(a, |, b), (c, |, d)]",
@@ -1404,7 +1540,7 @@ mod tests {
                 "[(a, |, b), (c, d, e)]",
                 Matrix::new(
                     "[",
-                    [cells(&["a"]), vec![bar()], cells(&["b", "c", "d", "e"])].concat(),
+                    [cells(&["a"]), vec![line()], cells(&["b", "c", "d", "e"])].concat(),
                     3,
                     "]",
                 ),
@@ -1412,7 +1548,7 @@ mod tests {
             (
                 // with nothing but lines, the lines are cells
                 "[(|, |), (|, |)]",
-                Matrix::new("[", vec![bar(); 4], 2, "]"),
+                Matrix::new("[", vec![line(); 4], 2, "]"),
             ),
         ] {
             assert_eq!(
@@ -1447,7 +1583,7 @@ mod tests {
     #[test]
     fn unmatched_bar_matrix_is_symbol() {
         let expr = super::parse("|(a, b), (c, d)");
-        assert_eq!(expr.first(), Some(&Simple::Symbol("|").into()));
+        assert_eq!(expr.first(), Some(&bar().into()));
     }
 
     #[test]
@@ -1458,7 +1594,7 @@ mod tests {
             "[",
             [
                 Intermediate::from(Simple::Ident("a")),
-                Simple::Symbol(",").into(),
+                comma().into(),
                 Intermediate::Space(" "),
                 Simple::Ident("b").into(),
             ],
@@ -1469,7 +1605,7 @@ mod tests {
             "[",
             [
                 Intermediate::from(Simple::from(first)),
-                Simple::Symbol(",").into(),
+                comma().into(),
                 Intermediate::Space(" "),
                 Simple::from(second).into(),
             ],
@@ -1520,10 +1656,10 @@ mod tests {
         let expected = [Matrix::new(
             "[",
             [
-                [Simple::Ident("a"), Simple::Symbol("|"), Simple::Ident("b")]
+                [Simple::Ident("a"), bar(), Simple::Ident("b")]
                     .into_iter()
                     .collect(),
-                [Simple::Ident("c"), Simple::Symbol("|"), Simple::Ident("d")]
+                [Simple::Ident("c"), bar(), Simple::Ident("d")]
                     .into_iter()
                     .collect(),
             ],
