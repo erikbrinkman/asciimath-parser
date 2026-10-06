@@ -47,21 +47,27 @@
 //! u ::= sqrt | text | bb | ...               unary symbols for font commands
 //! f ::= sin | cos | ...                      function symbols
 //! b ::= frac | root | stackrel | ...         binary symbols
+//! g ::= + | - | +- | pm | ...                signs
 //! l ::= ( | [ | { | (: | {: | ...            left brackets
 //! r ::= ) | ] | } | :) | :} | ...            right brackets
 //! d ::= '|' | '||'                           left-right brackets
 //! R ::= E | E,R                              Matrix row expression
 //! M ::= lRr | lRr,M                          Matrix expression
-//! S ::= v | lEr | uS | fS | bSS | dEd | lMr  Simple expression
-//! N ::= S | -S                               Negatable simple expression
-//! P ::= _N | ^N | _N^N                       Power expression
-//! I ::= fP?I | SP?                           Intermediate expression
-//! E ::= IE | I/I | I/NP?                     Expression
+//! S ::= v | g | gS | lEr | uS | fS | bSS | dEd | lMr  Simple expression
+//! P ::= _S | ^S | _S^S                       Power expression
+//! I ::= fP?I | SP? | gI                      Intermediate expression
+//! E ::= IE | I/I                             Expression
 //! ```
 //!
-//! As in asciimath, a `-` directly after `^`, `_`, or `/` is a prefix of the next simple
-//! expression, so `x^-1` has the superscript `-1`, and is parsed as a [`Group`][tree::Group] with
-//! empty brackets containing the `-` and the simple expression. Elsewhere `-` is its own token.
+//! A [sign][Token::Sign] — `+`, `-`, or a spelling like `+-` or `pm` — either joins the operands
+//! around it or prefixes the one after it, and the parse settles which. It prefixes what follows
+//! exactly when what sits to its left isn't a complete operand: nothing at all, because the sign
+//! starts the input, a group, or an argument; another operator or sign; a separator; an opening
+//! bracket; or a part still waiting for an argument, like `sqrt`, a script marker, or the `/` of a
+//! fraction. Everything else to the left is a target it joins, so `x^2 - 1` subtracts while `x^-1`
+//! has the superscript `-1`. A prefixing sign comes out with its operand as one
+//! [`Signed`][tree::Signed] part, scripts included, so `-x^2` is a single signed operand; a joining
+//! sign is a [`Sign`][tree::Simple::Sign] of its own.
 //!
 //! Left-right brackets are closed greedily, and must match the same string on both sides. If they
 //! can't be matched they'll be parsed as a symbol. This is particularly useful for probability
@@ -148,12 +154,12 @@
 //! The parsed representation is a tree like structure that has a hierarchy of types that roughly
 //! follows [`Expression`][tree::Expression] -> [`Intermediate`][tree::Intermediate] ->
 //! [`Frac`][tree::Frac] -> [`ScriptFunc`][tree::ScriptFunc] ->
-//! [`SimpleScript`][tree::SimpleScript] / [`Func`][tree::Func] -> [`Simple`][tree::Simple]. The
-//! exceptions to this hierarchy are [`Group`][tree::Group] and [`Matrix`][tree::Matrix] that are
-//! both "simple" structures, but contain nested expressions. All of these types implement `From`
-//! from their singleton children, allowing promoting simple types to more complex ones with
-//! minimal overhead. Most of their members are public allowing destructuring, especially with the
-//! `box_patterns` feature. See [`tree`] for more details.
+//! [`SimpleScript`][tree::SimpleScript] / [`Func`][tree::Func] / [`Signed`][tree::Signed] ->
+//! [`Simple`][tree::Simple]. The exceptions to this hierarchy are [`Group`][tree::Group] and
+//! [`Matrix`][tree::Matrix] that are both "simple" structures, but contain nested expressions. All
+//! of these types implement `From` from their singleton children, allowing promoting simple types
+//! to more complex ones with minimal overhead. Most of their members are public allowing
+//! destructuring, especially with the `box_patterns` feature. See [`tree`] for more details.
 //!
 //! ```
 //! use asciimath_parser::tree::{Expression, Simple};

@@ -3,7 +3,9 @@
 //! - [`Expression`] - A full expression containing a sequence of intermediate expressions
 //! - [`Intermediate`] - The most complicated single expression, this can be a high level fraction
 //! - [`Frac`] - A high level fraction, often parsed with a `/`
-//! - [`ScriptFunc`] - A scripted expression that can be a [`Func`] or just a simple expression
+//! - [`ScriptFunc`] - A scripted expression that can be a [`Func`], a [`Signed`] operand, or just
+//!   a simple expression
+//! - [`Signed`] - A sign, like `-`, bound to the scripted expression it prefixes
 //! - [`Func`] - A function like `sin` that can contain independent super- and subscripts
 //!   prior to its argument
 //! - [`SimpleScript`] - A simple expression that has super- and subscripts
@@ -113,12 +115,42 @@ impl<'a> SimpleBinary<'a> {
     }
 }
 
+/// A sign prefixing a simple expression, like the `-` of `x^-1`
+///
+/// In a simple context a sign can't bind scripts, so the `-` of `x^-1` binds the `1` while the
+/// script of `x_-1^-2` is still split between the sub- and superscript.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SimpleSigned<'a> {
+    /// The sign
+    pub sign: &'a str,
+    /// The signed operand
+    pub operand: Box<Simple<'a>>,
+}
+
+impl<'a> SimpleSigned<'a> {
+    /// Create a signed operand from its sign and operand
+    pub fn new<S>(sign: &'a str, operand: S) -> Self
+    where
+        S: Into<Simple<'a>>,
+    {
+        SimpleSigned {
+            sign,
+            operand: Box::new(operand.into()),
+        }
+    }
+
+    /// The signed operand
+    #[must_use]
+    pub fn operand(&self) -> &Simple<'a> {
+        &self.operand
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// A bracketd group that allows inserting complicated expressions in simplex contexts
 ///
 /// In some instances a bracket won't be parsed to close a group out, in that case the bracket will
-/// be the empty string. A `-` prefixing a script or denominator, e.g. `x^-1`, is a group with both
-/// brackets empty.
+/// be the empty string.
 pub struct Group<'a> {
     /// The left bracket
     pub left_bracket: &'a str,
@@ -371,10 +403,16 @@ pub enum Simple<'a> {
     Text(&'a str),
     /// An identity, usually a single character of something that doesn't have asciimath meaning
     Ident(&'a str),
-    /// An unrecognized operator, like `+`, from characters with no letters or digits
+    /// An unrecognized operator, like `!`, from characters with no letters or digits
     Operator(&'a str),
     /// A recognized symbol
     Symbol(&'a str),
+    /// A sign joining the operands on either side of it, like the `-` of `a - b`
+    ///
+    /// A sign with nothing after it to bind, like the `-` of `a -`, is also this.
+    Sign(&'a str),
+    /// A sign prefixing the simple expression after it, like the `-` of `x^-1`
+    Signed(SimpleSigned<'a>),
     /// A unary operator
     Unary(SimpleUnary<'a>),
     /// A simple unary function
@@ -410,6 +448,7 @@ macro_rules! simple_from {
 }
 
 simple_from!(SimpleUnary<'a> => Unary);
+simple_from!(SimpleSigned<'a> => Signed);
 simple_from!(SimpleFunc<'a> => Func);
 simple_from!(SimpleBinary<'a> => Binary);
 simple_from!(Group<'a> => Group);
@@ -604,6 +643,37 @@ impl<'a> Deref for Func<'a> {
     }
 }
 
+/// A sign prefixing a scripted expression, like the `-` of `-x^2`
+///
+/// The sign binds the whole part after it, scripts included, so `-x^2` is one signed operand
+/// rather than a sign next to a scripted `x`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Signed<'a> {
+    /// The sign
+    pub sign: &'a str,
+    /// The signed operand
+    pub operand: Box<ScriptFunc<'a>>,
+}
+
+impl<'a> Signed<'a> {
+    /// Create a signed operand from its sign and operand
+    pub fn new<Arg>(sign: &'a str, operand: Arg) -> Self
+    where
+        Arg: Into<ScriptFunc<'a>>,
+    {
+        Signed {
+            sign,
+            operand: Box::new(operand.into()),
+        }
+    }
+
+    /// The signed operand
+    #[must_use]
+    pub fn operand(&self) -> &ScriptFunc<'a> {
+        &self.operand
+    }
+}
+
 /// A scripted object or a scripted function
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScriptFunc<'a> {
@@ -611,6 +681,8 @@ pub enum ScriptFunc<'a> {
     Simple(SimpleScript<'a>),
     /// A function with sub abd superscripts
     Func(Func<'a>),
+    /// A sign prefixing a scripted expression
+    Signed(Signed<'a>),
 }
 
 impl Default for ScriptFunc<'_> {
@@ -622,6 +694,12 @@ impl Default for ScriptFunc<'_> {
 impl<'a> From<Func<'a>> for ScriptFunc<'a> {
     fn from(func: Func<'a>) -> Self {
         ScriptFunc::Func(func)
+    }
+}
+
+impl<'a> From<Signed<'a>> for ScriptFunc<'a> {
+    fn from(signed: Signed<'a>) -> Self {
+        ScriptFunc::Signed(signed)
     }
 }
 
@@ -730,8 +808,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        Expression, Frac, Func, Group, Intermediate, Matrix, Script, ScriptFunc, Simple,
-        SimpleBinary, SimpleFunc, SimpleScript, SimpleUnary,
+        Expression, Frac, Func, Group, Intermediate, Matrix, Script, ScriptFunc, Signed, Simple,
+        SimpleBinary, SimpleFunc, SimpleScript, SimpleSigned, SimpleUnary,
     };
 
     #[test]
@@ -753,6 +831,33 @@ mod tests {
         assert_eq!(
             Simple::from(func),
             Simple::Func(SimpleFunc::new("sin", Simple::Ident("x")))
+        );
+    }
+
+    #[test]
+    fn simple_signed() {
+        let signed = SimpleSigned::new("-", Simple::Number("1"));
+        assert_eq!(signed.sign, "-");
+        assert_eq!(signed.operand(), &Simple::Number("1"));
+        assert_eq!(
+            Simple::from(signed),
+            Simple::Signed(SimpleSigned::new("-", Simple::Number("1")))
+        );
+    }
+
+    #[test]
+    fn signed() {
+        let scripted = SimpleScript::with_super(Simple::Ident("x"), Simple::Number("2"));
+        let signed = Signed::new("-", scripted.clone());
+        assert_eq!(signed.sign, "-");
+        assert_eq!(signed.operand(), &ScriptFunc::from(scripted));
+        assert_eq!(
+            ScriptFunc::from(signed.clone()),
+            ScriptFunc::Signed(signed.clone())
+        );
+        assert_eq!(
+            Intermediate::from(signed.clone()),
+            Intermediate::ScriptFunc(ScriptFunc::Signed(signed))
         );
     }
 

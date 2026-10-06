@@ -20,10 +20,16 @@ pub enum Token {
     Text,
     /// A raw identifier
     Ident,
-    /// Unmatched characters with no letters or digits, like `+`
+    /// Unmatched characters with no letters or digits, like `!`
     Operator,
     /// A defined symbol token
     Symbol,
+    /// A token that can be a binary operator or a prefix sign, like `-`
+    ///
+    /// Whether it joins the operands around it or binds the one after it is settled while
+    /// parsing, giving a [`Sign`][crate::tree::Simple::Sign] or a
+    /// [`Signed`][crate::tree::Simple::Signed] operand.
+    Sign,
     /// A function
     Function,
     /// A unary operation
@@ -58,11 +64,12 @@ macro_rules! tokens {
 ///
 /// This a a constant exported to enable easily alternate parsing, or verification of string
 /// slices.
-pub const ASCIIMATH_TOKENS: [(&str, Token); 386] = tokens!(
+pub const ASCIIMATH_TOKENS: [(&str, Token); 388] = tokens!(
     Frac => "/";
     Super => "^";
     Sub => "_";
     Sep => ",";
+    Sign => "+", "-", "+-", "pm", "-+", "mp";
     Function => "sin", "cos", "tan", "sinh", "cosh", "tanh", "cot", "sec", "csc", "arcsin",
         "arccos", "arctan", "coth", "sech", "csch", "exp", "log", "ln", "det", "gcd", "lcm", "Sin",
         "Cos", "Tan", "Arcsin", "Arccos", "Arctan", "Sinh", "Cosh", "Tanh", "Cot", "Sec", "Csc",
@@ -97,8 +104,8 @@ pub const ASCIIMATH_TOKENS: [(&str, Token); 386] = tokens!(
     Symbol => "and", "or", "not", "neg", "=>", "implies", "if", "<=>", "iff", "AA", "forall", "EE",
         "exists", "_|_", "bot", "TT", "top", "|--", "vdash", "|==", "models";
     // misc
-    Symbol => ":|:", "int", "oint", "del", "partial", "grad", "nabla", "+-", "pm", "-+", "mp",
-        "O/", "emptyset", "oo", "infty", "aleph", "...", "ldots", ":.", "therefore", ":'",
+    Symbol => ":|:", "int", "oint", "del", "partial", "grad", "nabla", "O/", "emptyset", "oo",
+        "infty", "aleph", "...", "ldots", ":.", "therefore", ":'",
         "because", "/_", "angle", "/_\\", "triangle", "'", "prime", "\\ ", "frown", "quad",
         "qquad", "cdots", "vdots", "ddots", "diamond", "square", "|__", "lfloor", "__|", "rfloor",
         "|~", "lceiling", "~|", "rceiling", "CC", "NN", "QQ", "RR", "ZZ", "hbar", "enspace",
@@ -170,7 +177,7 @@ const TEXT_COMMANDS: [&str; 2] = ["text", "mbox"];
 ///
 /// This is the compliant mode of tokenization for for asciimath and means that unknown characters
 /// are identified individually. As in asciimath, unknown characters that aren't letters or digits,
-/// like `+`, are [operators][Token::Operator] instead.
+/// like `!`, are [operators][Token::Operator] instead.
 ///
 /// As in asciimath, when a `text` or `mbox` [unary][Token::Unary] token is followed by `(`, `[`,
 /// or `{`, everything up to the first matching close bracket is a single [`Token::Text`], so
@@ -348,7 +355,7 @@ mod tests {
                 (" ", Token::Space),
                 ("a", Token::Ident),
                 ("  ", Token::Space),
-                ("+", Token::Operator),
+                ("+", Token::Sign),
                 ("\t", Token::Space),
                 ("b", Token::Ident),
                 (" ", Token::Space),
@@ -377,7 +384,7 @@ mod tests {
             *tokens,
             [
                 ("a", Token::Ident),
-                ("+", Token::Operator),
+                ("+", Token::Sign),
                 ("b", Token::Ident),
                 ("!", Token::Operator),
                 ("α", Token::Ident),
@@ -385,14 +392,14 @@ mod tests {
         );
 
         let token_map = HashPrefixMap::from_iter(ASCIIMATH_TOKENS);
-        let runs: Vec<_> = Tokenizer::with_tokens("ab +? c", &token_map, false)
+        let runs: Vec<_> = Tokenizer::with_tokens("ab ?! c", &token_map, false)
             .filter(not_space)
             .collect();
         assert_eq!(
             *runs,
             [
                 ("ab", Token::Ident),
-                ("+?", Token::Operator),
+                ("?!", Token::Operator),
                 ("c", Token::Ident),
             ]
         );
@@ -475,7 +482,7 @@ mod tests {
             *dotted,
             [
                 ("a.b", Token::Ident),
-                ("+", Token::Operator),
+                ("+", Token::Sign),
                 ("c", Token::Ident),
             ]
         );
@@ -484,6 +491,28 @@ mod tests {
             .filter(not_space)
             .collect();
         assert_eq!(*unterm, [("x", Token::Ident), ("\"unterm", Token::Ident)]);
+    }
+
+    #[test]
+    fn signs_have_their_own_class() {
+        let tokens: Vec<_> = Tokenizer::new("+ - +- pm -+ mp -= o- -> !")
+            .filter(not_space)
+            .collect();
+        assert_eq!(
+            *tokens,
+            [
+                ("+", Token::Sign),
+                ("-", Token::Sign),
+                ("+-", Token::Sign),
+                ("pm", Token::Sign),
+                ("-+", Token::Sign),
+                ("mp", Token::Sign),
+                ("-=", Token::Symbol),
+                ("o-", Token::Symbol),
+                ("->", Token::Symbol),
+                ("!", Token::Operator),
+            ]
+        );
     }
 
     #[test]
