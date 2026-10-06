@@ -990,6 +990,8 @@ mod tests {
             ("{-x}", "{", "}"),
             ("{:-x:}", "{:", ":}"),
             ("|-x|", "|", "|"),
+            ("|__ -x __|", "|__", "__|"),
+            ("|~ -x ~|", "|~", "~|"),
         ] {
             let expected = Expression::from_iter([Group::from_iter(
                 left,
@@ -1146,7 +1148,8 @@ mod tests {
 
     #[test]
     fn sign_after_a_symbol_that_stands_alone_is_binary() {
-        // a symbol that wants no operand of its own is a target like an identifier
+        // a symbol that wants no operand of its own is a target like an identifier, and so is a
+        // closed group, which is what a floor or ceiling mark completes
         for input in [
             "alpha - 1",
             "dx - 1",
@@ -1154,6 +1157,8 @@ mod tests {
             "x' - 1",
             "n! - 1",
             "50% - 1",
+            "|__ x __| - 1",
+            "|~ x ~| - 1",
         ] {
             let expr = super::parse(input);
             assert!(
@@ -1421,6 +1426,53 @@ mod tests {
         )]
         .into_iter()
         .collect();
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn floor_and_ceiling_marks_group() {
+        for (input, left, right) in [
+            ("|__ x __|", "|__", "__|"),
+            ("|__x__|", "|__", "__|"),
+            ("|~ x ~|", "|~", "~|"),
+            ("lfloor x rfloor", "lfloor", "rfloor"),
+            ("lceiling x rceiling", "lceiling", "rceiling"),
+            // a mark pairs with any closing bracket, as "(" already pairs with "]"
+            ("|__ x rfloor", "|__", "rfloor"),
+            ("|__ x )", "|__", ")"),
+            ("( x __|", "(", "__|"),
+        ] {
+            let expected =
+                Expression::from_iter([Group::from_iter(left, [Simple::Ident("x")], right)]);
+            assert_eq!(super::parse(input), expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn floor_and_ceiling_marks_nest() {
+        let expr = super::parse("|__ |~ x ~| __|");
+        let ceiling = Group::from_iter("|~", [Simple::Ident("x")], "~|");
+        let expected = Expression::from_iter([Group::from_iter("|__", [ceiling], "__|")]);
+        assert_eq!(expr, expected);
+
+        let expr = super::parse("(|__ x __|)");
+        let floor = Group::from_iter("|__", [Simple::Ident("x")], "__|");
+        let expected = Expression::from_iter([Group::from_iter("(", [floor], ")")]);
+        assert_eq!(expr, expected);
+    }
+
+    #[test]
+    fn unmatched_floor_and_ceiling_marks_leave_the_other_bracket_empty() {
+        let expr = super::parse("|__ x");
+        let expected = Expression::from_iter([Group::from_iter("|__", [Simple::Ident("x")], "")]);
+        assert_eq!(expr, expected);
+
+        let expr = super::parse("x__|");
+        let expected = Expression::from_iter([Group::from_iter("", [Simple::Ident("x")], "__|")]);
+        assert_eq!(expr, expected);
+
+        let expr = super::parse("__|");
+        let expected = Expression::from_iter([Group::new("", Expression::default(), "__|")]);
         assert_eq!(expr, expected);
     }
 
