@@ -191,8 +191,7 @@ pub const ASCIIMATH_TOKENS: [(&str, Token); 390] = {
         Symbol(Space) => "\\ ", "quad", "qquad", "enspace", "thinspace";
         Symbol(Glyph) => "del", "partial", "grad", "nabla", "O/", "emptyset", "oo", "infty",
             "aleph", "...", "ldots", "/_", "angle", "/_\\", "triangle", "'", "prime",
-            "cdots", "vdots", "ddots", "square", "|__", "lfloor", "__|", "rfloor", "|~",
-            "lceiling", "~|", "rceiling", "CC", "NN", "QQ", "RR", "ZZ", "hbar";
+            "cdots", "vdots", "ddots", "square", "CC", "NN", "QQ", "RR", "ZZ", "hbar";
         // not asciimath symbols, but each completes the operand before it, so a sign after joins
         Symbol(Glyph) => "!", "%";
         // underover
@@ -204,9 +203,12 @@ pub const ASCIIMATH_TOKENS: [(&str, Token); 390] = {
             "twoheadrightarrowtail", "|->", "mapsto", "larr", "leftarrow", "harr",
             "leftrightarrow", "rArr", "Rightarrow", "lArr", "Leftarrow", "hArr", "Leftrightarrow",
             "dArr", "Downarrow", "rightleftharpoons";
-        // brackets
-        OpenBracket => "(", "[", "{", "|:", "(:", "<<", "langle", "left(", "left[", "{:";
-        CloseBracket => ")", "]", "}", ":|", ":)", ">>", "rangle", "right)", "right]", ":}";
+        // brackets; the floor and ceiling marks are brackets here, where asciimath makes them
+        // plain symbols
+        OpenBracket => "(", "[", "{", "|:", "(:", "<<", "langle", "left(", "left[", "{:", "|__",
+            "lfloor", "|~", "lceiling";
+        CloseBracket => ")", "]", "}", ":|", ":)", ">>", "rangle", "right)", "right]", ":}", "__|",
+            "rfloor", "~|", "rceiling";
         OpenCloseBracket => "|", "||";
         // defined names
         Symbol(Name) => "dx", "dy", "dz", "dt";
@@ -636,6 +638,53 @@ mod tests {
                 ("\\\\", Token::Symbol(SymbolClass::Joining)),
                 ("backslash", Token::Symbol(SymbolClass::Joining)),
                 ("setminus", Token::Symbol(SymbolClass::Joining)),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_floor_and_ceiling_marks_are_brackets() {
+        let tokens: Vec<_> = Tokenizer::new("|__ lfloor |~ lceiling __| rfloor ~| rceiling")
+            .filter(not_space)
+            .collect();
+        assert_eq!(
+            *tokens,
+            [
+                ("|__", Token::OpenBracket),
+                ("lfloor", Token::OpenBracket),
+                ("|~", Token::OpenBracket),
+                ("lceiling", Token::OpenBracket),
+                ("__|", Token::CloseBracket),
+                ("rfloor", Token::CloseBracket),
+                ("~|", Token::CloseBracket),
+                ("rceiling", Token::CloseBracket),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_floor_mark_outruns_the_bar_and_the_subscript_it_starts_with() {
+        // "|" is itself a bracket and "_" a subscript, so only the longest match gets these right
+        let tokens: Vec<_> = Tokenizer::new("a|__b__|").collect();
+        assert_eq!(
+            *tokens,
+            [
+                ("a", Token::Ident),
+                ("|__", Token::OpenBracket),
+                ("b", Token::Ident),
+                ("__|", Token::CloseBracket),
+            ]
+        );
+        let tokens: Vec<_> = Tokenizer::new("x__|").collect();
+        assert_eq!(*tokens, [("x", Token::Ident), ("__|", Token::CloseBracket)]);
+        // "_|_" is longer still, so it wins over the subscript and the floor mark both
+        let tokens: Vec<_> = Tokenizer::new("x_|__").collect();
+        assert_eq!(
+            *tokens,
+            [
+                ("x", Token::Ident),
+                ("_|_", Token::Symbol(SymbolClass::Glyph)),
+                ("_", Token::Sub),
             ]
         );
     }

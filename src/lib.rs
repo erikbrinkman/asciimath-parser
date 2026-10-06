@@ -109,6 +109,10 @@
 //! to support and seems like an unuseful edgecase as it could always be substituted with
 //! "{: ...  :|".
 //!
+//! Asciimath makes the floor and ceiling marks `|__`, `__|`, `|~` and `~|`, and their spellings
+//! `lfloor`, `rfloor`, `lceiling` and `rceiling`, plain symbols. Here they are brackets, so
+//! `|__ x __|` is a [`Group`][tree::Group] like `(x)`.
+//!
 //! ### Extensions to Asciimath
 //!
 //! This parser is meant to be extensible, so if there are parts that don't function as desired,
