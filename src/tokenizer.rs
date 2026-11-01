@@ -2,6 +2,7 @@ use crate::prefix_map::{HashPrefixMap, PrefixMap};
 use std::collections::VecDeque;
 use std::iter::FusedIterator;
 use std::sync::LazyLock;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// A parsed token label
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -334,21 +335,26 @@ static DEFAULT_TOKENS: LazyLock<DefaultTokens> =
 // TODO allow for negative sign preceeding numbers?
 fn strip_number(inp: &str) -> Option<(&str, &str)> {
     let mut seen_decimal = false;
-    let len = inp
-        .char_indices()
-        .find(|(_, c)| match c {
-            '.' if !seen_decimal => {
+    let mut len = inp
+        .bytes()
+        .position(|byte| match byte {
+            b'.' if !seen_decimal => {
                 seen_decimal = true;
                 false
             }
-            '0'..='9' => false,
+            b'0'..=b'9' => false,
             _ => true,
         })
-        .map_or(inp.len(), |(i, _)| i);
-    if len > 1 || (!seen_decimal && len > 0) {
-        Some((&inp[..len], &inp[len..]))
-    } else {
+        .unwrap_or(inp.len());
+    // a mark on the last digit makes that digit part of the grapheme after the number
+    if !ends_on_grapheme(inp, len) {
+        len -= 1;
+    }
+    let (number, rest) = inp.split_at(len);
+    if number.is_empty() || number == "." {
         None
+    } else {
+        Some((number, rest))
     }
 }
 
@@ -357,9 +363,37 @@ fn strip_text(inp: &str) -> Option<(&str, &str)> {
     if inp.chars().next()? != '"' {
         return None;
     }
-    let (len, _) = inp[1..].char_indices().find(|(_, c)| c == &'"')?;
+    let (len, _) = inp[1..]
+        .grapheme_indices(true)
+        .find(|&(_, grapheme)| grapheme == "\"")?;
     // NOTE off by 1 because we skipped the first byte
     Some((&inp[1..=len], &inp[len + 2..]))
+}
+
+/// Whether the first `len` bytes of `inp` end between two graphemes
+fn ends_on_grapheme(inp: &str, len: usize) -> bool {
+    let bytes = inp.as_bytes();
+    match (len.checked_sub(1).map(|last| bytes[last]), bytes.get(len)) {
+        (None, _) | (_, None) => true,
+        // two ascii characters are two graphemes, except a carriage return and line feed
+        (Some(last), Some(&next)) if last.is_ascii() && next.is_ascii() => {
+            !(last == b'\r' && next == b'\n')
+        }
+        _ => inp
+            .grapheme_indices(true)
+            .map(|(index, _)| index)
+            .take_while(|&index| index <= len)
+            .any(|index| index == len),
+    }
+}
+
+/// The grapheme at the start of `inp`, if it isn't empty
+fn first_grapheme(inp: &str) -> Option<&str> {
+    match inp.as_bytes() {
+        [] => None,
+        [first, ..] if first.is_ascii() && ends_on_grapheme(inp, 1) => Some(&inp[..1]),
+        _ => inp.graphemes(true).next(),
+    }
 }
 
 /// The token for characters that didn't match any token, number, or text
@@ -379,6 +413,10 @@ const TEXT_COMMANDS: [&str; 2] = ["text", "mbox"];
 /// This is the compliant mode of tokenization for for asciimath and means that unknown characters
 /// are identified individually. As in asciimath, unknown characters that aren't letters or digits,
 /// like `?`, are [operators][Token::Operator] instead.
+///
+/// A character here is a grapheme, what a reader sees as one character, so a letter with
+/// combining marks, like `x̂` typed as `x` and a combining hat, is one identifier, and no token
+/// or number ends partway through one.
 ///
 /// As in asciimath, when a `text` or `mbox` [unary][Token::Unary] token is followed by `(`, `[`,
 /// or `{`, everything up to the first matching close bracket is a single [`Token::Text`], so
@@ -422,7 +460,7 @@ impl<'a, 'b, T> Tokenizer<'a, 'b, T> {
     /// # Parameters
     /// - `inp`: the string to tokenize
     /// - `token_map`: a prefix map of available tokens
-    /// - `char_ident`: whether to parse individual characters as identifiers (standard) or to
+    /// - `char_ident`: whether to parse individual graphemes as identifiers (standard) or to
     ///   treat entire sequences of unmatched characters as a single identifier. Either way, a token
     ///   with no letters or digits is an [operator][Token::Operator].
     pub fn with_tokens(inp: &'a str, token_map: &'b T, char_ident: bool) -> Self {
@@ -478,6 +516,7 @@ where
             Some((space, Token::Space))
         } else if let Some((len, &token)) = self.token_map.get_longest_prefix(self.remaining)
             && len > 0
+            && ends_on_grapheme(self.remaining, len)
         {
             let (pref, rem) = self.remaining.split_at(len);
             self.remaining = rem;
@@ -494,11 +533,8 @@ where
             self.remaining = res;
             Some((text, Token::Text))
         } else if self.char_ident {
-            // next char
-            self.remaining.chars().next().map(|chr| {
-                let len = chr.len_utf8();
-                let raw = &self.remaining[..len];
-                self.remaining = &self.remaining[len..];
+            first_grapheme(self.remaining).map(|raw| {
+                self.remaining = &self.remaining[raw.len()..];
                 (raw, unmatched_token(raw))
             })
         } else {
@@ -506,17 +542,17 @@ where
             // a non-decimal '.' or unclosed '"' stays in the run rather than ending it
             let len = self
                 .remaining
-                .char_indices()
-                .find(|&(i, c)| {
-                    let rest = &self.remaining[i..];
-                    c.is_whitespace()
-                        || c.is_ascii_digit()
-                        || (c == '.' && strip_number(rest).is_some())
-                        || (c == '"' && strip_text(rest).is_some())
+                .grapheme_indices(true)
+                .skip(1)
+                .find(|&(index, _)| {
+                    let rest = &self.remaining[index..];
+                    rest.starts_with(char::is_whitespace)
+                        || strip_number(rest).is_some()
+                        || strip_text(rest).is_some()
                         || self
                             .token_map
                             .get_longest_prefix(rest)
-                            .is_some_and(|(len, _)| len > 0)
+                            .is_some_and(|(len, _)| len > 0 && ends_on_grapheme(rest, len))
                 })
                 .map_or(self.remaining.len(), |(i, _)| i);
             // len == 0 only at end of input, since nothing matches at the current position
@@ -670,6 +706,40 @@ mod tests {
                 ("^", Token::Super),
                 ("2", Token::Number),
                 ("text with spaces", Token::Text),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_grapheme_is_one_character() {
+        let tokens: Vec<_> = Tokenizer::new("x\u{302} + e\u{301} =\u{338} 12\u{302} 🇺🇸 \u{600}1")
+            .filter(not_space)
+            .collect();
+        assert_eq!(
+            *tokens,
+            [
+                ("x\u{302}", Token::Ident),
+                ("+", Token::Sign),
+                ("e\u{301}", Token::Ident),
+                ("=\u{338}", Token::Operator),
+                ("1", Token::Number),
+                ("2\u{302}", Token::Ident),
+                ("🇺🇸", Token::Operator),
+                ("\u{600}1", Token::Ident),
+            ]
+        );
+
+        let token_map = HashPrefixMap::from_iter(asciimath_spellings());
+        let runs: Vec<_> = Tokenizer::with_tokens("ab\u{302}+c a=\u{338}b", &token_map, false)
+            .filter(not_space)
+            .collect();
+        assert_eq!(
+            *runs,
+            [
+                ("ab\u{302}", Token::Ident),
+                ("+", Token::Sign),
+                ("c", Token::Ident),
+                ("a=\u{338}b", Token::Ident),
             ]
         );
     }

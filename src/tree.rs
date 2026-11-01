@@ -421,7 +421,7 @@ pub enum Simple<'a> {
     Number(&'a str),
     /// Raw text
     Text(&'a str),
-    /// A bare variable, a single character under the default tokenizer
+    /// A bare variable, a single grapheme under the default tokenizer
     ///
     /// A multi-letter entry the token map defines, like `dx`, is a
     /// [`Name`][crate::SymbolClass::Name] symbol instead, so a one-letter variable and a name
