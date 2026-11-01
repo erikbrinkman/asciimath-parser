@@ -1,6 +1,6 @@
 [package]
 name = "asciimath-parser"
-version = "0.5.0"
+version = "0.6.0"
 description = "A fast extensible memory-efficient asciimath parser"
 repository = "https://github.com/erikbrinkman/asciimath-parser"
 license = "MIT"
@@ -13,6 +13,7 @@ include = ["/src", "/LICENSE", "/README.md"]
 
 [dependencies]
 rustc-hash = "2"
+unicode-segmentation = "1"
 
 [dev-dependencies]
 rand = "0.10"
