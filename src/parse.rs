@@ -1186,6 +1186,43 @@ mod tests {
     }
 
     #[test]
+    fn a_unicode_form_parses_like_its_spelling() {
+        for relation in ["⊂", "subset"] {
+            let input = format!("a {relation} b");
+            let expr = super::parse(&input);
+            let expected = Expression::from_iter([
+                Intermediate::from(Simple::Ident("a")),
+                Intermediate::Space(" "),
+                Symbol::new(relation, SymbolClass::Joining).into(),
+                Intermediate::Space(" "),
+                Simple::Ident("b").into(),
+            ]);
+            assert_eq!(expr, expected, "{relation}");
+        }
+    }
+
+    #[test]
+    fn unicode_signs_are_signs() {
+        for sign in ["±", "∓", "−"] {
+            let prefixed = format!("{sign} x");
+            let expr = super::parse(&prefixed);
+            let expected = Expression::from_iter([Signed::new(sign, Simple::Ident("x"))]);
+            assert_eq!(expr, expected, "{sign}");
+
+            let joining = format!("a {sign} b");
+            let expr = super::parse(&joining);
+            let expected = Expression::from_iter([
+                Intermediate::from(Simple::Ident("a")),
+                Intermediate::Space(" "),
+                Simple::Sign(sign).into(),
+                Intermediate::Space(" "),
+                Simple::Ident("b").into(),
+            ]);
+            assert_eq!(expr, expected, "{sign}");
+        }
+    }
+
+    #[test]
     fn a_name_is_not_a_bare_variable() {
         let expr = super::parse("x dx");
         let expected = Expression::from_iter([

@@ -1,4 +1,4 @@
-use asciimath_parser::ASCIIMATH_TOKENS;
+use asciimath_parser::{ASCIIMATH_TOKENS, TokenSpelling};
 use rand::distr::Alphanumeric;
 use rand::distr::slice::Choose;
 use rand::distr::weighted::WeightedIndex;
@@ -26,5 +26,6 @@ fn random_string<V>(rng: &mut impl Rng, tokens: &[(&str, V)]) -> String {
 
 pub static RANDOM_EXAMPLES: LazyLock<[String; 30]> = LazyLock::new(|| {
     let mut rng = StdRng::from_seed([0; 32]);
-    [(); 30].map(|_| random_string(&mut rng, &ASCIIMATH_TOKENS))
+    let spellings = ASCIIMATH_TOKENS.map(TokenSpelling::entry);
+    [(); 30].map(|_| random_string(&mut rng, &spellings))
 });

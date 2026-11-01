@@ -1,5 +1,5 @@
 use asciimath_parser::prefix_map::{HashPrefixMap, PrefixMap};
-use asciimath_parser::{ASCIIMATH_TOKENS, Token, Tokenizer};
+use asciimath_parser::{Token, Tokenizer, asciimath_spellings};
 use rand::distr::Alphanumeric;
 use rand::distr::slice::Choose;
 use rand::distr::weighted::WeightedIndex;
@@ -42,12 +42,13 @@ macro_rules! make_test {
 
             #[test]
             fn random_prefix() {
-                let linear_tokens = LinearPrefixMap(ASCIIMATH_TOKENS.into());
-                let ref_tokens = $struct::$factory(ASCIIMATH_TOKENS);
+                let spellings: Vec<_> = asciimath_spellings().collect();
+                let linear_tokens = LinearPrefixMap(spellings.clone());
+                let ref_tokens = $struct::$factory(asciimath_spellings());
 
                 let mut rng = StdRng::from_seed([0; 32]);
                 for _ in 0..20 {
-                    let string = random_string(&mut rng, &ASCIIMATH_TOKENS);
+                    let string = random_string(&mut rng, &spellings);
                     let mut linear = Tokenizer::with_tokens(&string, &linear_tokens, true);
                     let mut hash = Tokenizer::with_tokens(&string, &ref_tokens, true);
                     loop {

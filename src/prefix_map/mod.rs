@@ -8,9 +8,9 @@
 //!
 //! ```
 //! use asciimath_parser::prefix_map::HashPrefixMap;
-//! use asciimath_parser::{ASCIIMATH_TOKENS, Tokenizer, parse_tokens};
+//! use asciimath_parser::{Tokenizer, asciimath_spellings, parse_tokens};
 //!
-//! let token_map = HashPrefixMap::from_iter(ASCIIMATH_TOKENS);
+//! let token_map = HashPrefixMap::from_iter(asciimath_spellings());
 //! let tokens = Tokenizer::with_tokens("sum_i x_i", &token_map, true);
 //! let parsed = parse_tokens(tokens);
 //! ```

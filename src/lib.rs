@@ -69,15 +69,16 @@
 //! its scripts and leaves the operand after it as the next part of the expression, as it always
 //! has, while `sin` and the other [functions][Token::Function] still take theirs.
 //!
-//! A [sign][Token::Sign] — `+`, `-`, or a spelling like `+-` or `pm` — either joins the operands
-//! around it or prefixes the one after it, and the parse settles which. It prefixes what follows
-//! exactly when what sits to its left isn't a complete operand: nothing at all, because the sign
-//! starts the input, a group, or an argument; another operator or sign; or a symbol that wants an
-//! operand of its own, which is anything that joins the operands around it, wants the one after it,
-//! separates, or is space. Everything else to the left is a target it joins, so `x^2 - 1` subtracts
-//! while `x = -y` and `sum -x` both prefix and `x^-1` has the superscript `-1`. A prefixing sign
-//! comes out with its operand as one [`Signed`][tree::Signed] part, scripts included, so `-x^2` is
-//! a single signed operand; a joining sign is a [`Sign`][tree::Simple::Sign] of its own.
+//! A [sign][Token::Sign] — `+`, `-`, `−`, or a spelling like `+-`, `pm` or `±` — either joins the
+//! operands around it or prefixes the one after it, and the parse settles which. It prefixes what
+//! follows exactly when what sits to its left isn't a complete operand: nothing at all, because the
+//! sign starts the input, a group, or an argument; another operator or sign; or a symbol that wants
+//! an operand of its own, which is anything that joins the operands around it, wants the one after
+//! it, separates, or is space. Everything else to the left is a target it joins, so `x^2 - 1`
+//! subtracts while `x = -y` and `sum -x` both prefix and `x^-1` has the superscript `-1`. A
+//! prefixing sign comes out with its operand as one [`Signed`][tree::Signed] part, scripts
+//! included, so `-x^2` is a single signed operand; a joining sign is a [`Sign`][tree::Simple::Sign]
+//! of its own.
 //!
 //! Left-right brackets are closed greedily, and must match the same string on both sides. If they
 //! can't be matched they'll be parsed as a symbol. This is particularly useful for probability
@@ -113,6 +114,15 @@
 //! `lfloor`, `rfloor`, `lceiling` and `rceiling`, plain symbols. Here they are brackets, so
 //! `|__ x __|` is a [`Group`][tree::Group] like `(x)`.
 //!
+//! The default tokenizer also takes the unicode form of each symbol, so `⊂` is `subset`, and a few
+//! spellings asciimath lacks, like `<-` and `iint`; see [`ASCIIMATH_TOKENS`]. So `x<-1` is an arrow
+//! rather than `x < -1`.
+//!
+//! Besides asciimath's fonts, `it` and its long form `mathit` set italic, and `bbit`, `bbsf`,
+//! `sfit`, `bbsfit`, `bbcc` and `bbfr` set the bold, italic and sans-serif combinations of the
+//! fonts their names join, so `bbit x` is bold italic. Each is one command, so a renderer gets the
+//! combined font by name, where `bb it x` is one font inside another.
+//!
 //! ### Extensions to Asciimath
 //!
 //! This parser is meant to be extensible, so if there are parts that don't function as desired,
@@ -124,10 +134,10 @@
 //! 2. Custom tokenizer options can be used by creating an alternate [`Tokenizer`] using
 //!    [`with_tokens`][Tokenizer::with_tokens].
 //!    ```
-//!    use asciimath_parser::{parse_tokens, Tokenizer, ASCIIMATH_TOKENS};
+//!    use asciimath_parser::{asciimath_spellings, parse_tokens, Tokenizer};
 //!    use asciimath_parser::prefix_map::HashPrefixMap;
 //!
-//!    let token_map = HashPrefixMap::from_iter(ASCIIMATH_TOKENS);
+//!    let token_map = HashPrefixMap::from_iter(asciimath_spellings());
 //!    let parsed = parse_tokens(Tokenizer::with_tokens("...", &token_map, false));
 //!    ```
 //! 3. Nonstandard tokens can be used instead by creating custom token maps:
@@ -154,14 +164,17 @@
 //!    are trees, some heap allocation is necessary to store the recursive structure.
 //!
 //! As a result, this parser produces a parsed representation, but doesn't attach any meanings to
-//! the tokens in the parsed tree. The default parser treats both "*" and "cdot" as tokens, but
-//! doesn't say anywhere that they should be rendered the same. This choice was made so that you
-//! could easily add or remove tokens, or even change their meaning, and this library doesn't have
-//! to know.
+//! the tokens in the parsed tree. The tree keeps "*" and "cdot" as typed, so that you could easily
+//! add or remove tokens, or even change their meaning, and this library doesn't have to know.
 //!
 //! If you want to consume this output and make sure the tokens are parsed correctly, you can use
-//! the exported const version of the tokens uses to parse. By default [`parse`][crate::parse()]
-//! uses [`crate::ASCIIMATH_TOKENS`]
+//! the exported table of the tokens used to parse, [`ASCIIMATH_TOKENS`]. Each
+//! [entry][TokenSpelling] gives a spelling, its token, and the unicode form asciimath renders it
+//! as, so "*" and "cdot" both say `⋅`, while spellings that render as typed, like `=`, or that
+//! have no form of their own, like `sin`, say none. [`parse`][crate::parse()] also accepts each
+//! form as another spelling of its token, unless it already spells something else, so `a ⊂ b`
+//! parses like `a subset b` and `± x` like `+- x`; [`asciimath_spellings`] lists every spelling it
+//! accepts.
 //!
 //! ## Tree Structure
 //!
@@ -202,4 +215,6 @@ mod tokenizer;
 pub mod tree;
 
 pub use parse::{parse, parse_tokens};
-pub use tokenizer::{ASCIIMATH_TOKENS, SymbolClass, Token, Tokenizer};
+pub use tokenizer::{
+    ASCIIMATH_TOKENS, SymbolClass, Token, TokenSpelling, Tokenizer, asciimath_spellings,
+};
