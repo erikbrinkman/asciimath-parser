@@ -5,7 +5,7 @@ mod examples;
 extern crate test;
 
 use asciimath_parser::prefix_map::HashPrefixMap;
-use asciimath_parser::{ASCIIMATH_TOKENS, Tokenizer};
+use asciimath_parser::{Tokenizer, asciimath_spellings};
 use examples::{EXAMPLES, RANDOM_EXAMPLES};
 use std::hint::black_box;
 use test::Bencher;
@@ -17,7 +17,7 @@ macro_rules! make_bench {
 
             #[bench]
             fn example_prefix(bench: &mut Bencher) {
-                let tokens = $struct::$factory(ASCIIMATH_TOKENS);
+                let tokens = $struct::$factory(asciimath_spellings());
                 bench.iter(|| {
                     for example in EXAMPLES {
                         for token in Tokenizer::with_tokens(black_box(example), &tokens, true) {
@@ -29,7 +29,7 @@ macro_rules! make_bench {
 
             #[bench]
             fn random_prefix(bench: &mut Bencher) {
-                let tokens = $struct::$factory(ASCIIMATH_TOKENS);
+                let tokens = $struct::$factory(asciimath_spellings());
                 let examples = &*RANDOM_EXAMPLES; // deref to for generation outside of bench
                 bench.iter(|| {
                     for example in examples {

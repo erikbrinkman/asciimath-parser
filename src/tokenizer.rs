@@ -115,23 +115,56 @@ impl SymbolClass {
     }
 }
 
+/// A spelling of a token, with the unicode form asciimath renders it as
+///
+/// `unicode` is [`None`] when the spelling renders as typed, like `=` or `(`, or has no form of its
+/// own, like `sin`, `sqrt` or `dx`. An invisible bracket, like `{:`, renders as `Some("")`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TokenSpelling {
+    /// The spelling as typed
+    pub spelling: &'static str,
+    /// The token the spelling is
+    pub token: Token,
+    /// The unicode form it renders as, if different from the spelling
+    pub unicode: Option<&'static str>,
+}
+
+impl TokenSpelling {
+    /// The spelling and its token, as a token map takes them
+    #[must_use]
+    pub const fn entry(self) -> (&'static str, Token) {
+        (self.spelling, self.token)
+    }
+}
+
 macro_rules! tokens {
-    ($($token:expr => $($str:expr),+;)+) => {
+    ($($token:expr => $($spelling:literal $(=> $unicode:literal)?),+;)+) => {
         [
             $(
                 $(
-                    ($str, $token),
+                    TokenSpelling {
+                        spelling: $spelling,
+                        token: $token,
+                        unicode: tokens!(@unicode $($unicode)?),
+                    },
                 )+
             )+
         ]
     };
+    (@unicode) => {
+        None
+    };
+    (@unicode $unicode:literal) => {
+        Some($unicode)
+    };
 }
 
-/// The tokens for standard asciimath
+/// The tokens for standard asciimath, each with the unicode form it renders as
 ///
-/// This a a constant exported to enable easily alternate parsing, or verification of string
-/// slices.
-pub const ASCIIMATH_TOKENS: [(&str, Token); 390] = {
+/// This is exported to enable easily alternate parsing, verification of string slices,
+/// or rendering. The forms follow asciimath's own. The default tokenizer also accepts each form as
+/// a spelling of the same token; see [`asciimath_spellings`].
+pub static ASCIIMATH_TOKENS: [TokenSpelling; 429] = {
     use SymbolClass::{Glyph, Joining, JoiningName, Leading, LeadingName, Name, Space};
     use Token::{
         Binary, CloseBracket, Frac, Function, OpenBracket, OpenCloseBracket, Sep, Sign, Sub, Super,
@@ -143,7 +176,8 @@ pub const ASCIIMATH_TOKENS: [(&str, Token); 390] = {
         Super => "^";
         Sub => "_";
         Sep => ",";
-        Sign => "+", "-", "+-", "pm", "-+", "mp";
+        // `−` is the true minus sign
+        Sign => "+", "-", "−", "+-" => "±", "pm" => "±", "-+" => "∓", "mp" => "∓";
         Function => "sin", "cos", "tan", "sinh", "cosh", "tanh", "cot", "sec", "csc", "arcsin",
             "arccos", "arctan", "coth", "sech", "csch", "exp", "log", "ln", "det", "gcd", "lcm",
             "Sin", "Cos", "Tan", "Arcsin", "Arccos", "Arctan", "Sinh", "Cosh", "Tanh", "Cot",
@@ -151,75 +185,151 @@ pub const ASCIIMATH_TOKENS: [(&str, Token); 390] = {
         Unary => "sqrt", "abs", "norm", "floor", "ceil", "Abs", "hat", "bar", "overline", "vec",
             "dot", "ddot", "overarc", "overparen", "ul", "underline", "ubrace", "underbrace",
             "obrace", "overbrace", "text", "mbox", "cancel", "tilde";
-        // font commands
+        // font commands; italic and the combined fonts aren't asciimath's
         Unary => "bb", "mathbf", "sf", "mathsf", "bbb", "mathbb", "cc", "mathcal", "tt", "mathtt",
-            "fr", "mathfrak", "mathit", "italic", "bold", "bbit", "bbsf", "sfit", "bbsfit",
-            "bbcc", "bbfr";
+            "fr", "mathfrak", "it", "mathit", "bbit", "bbsf", "sfit", "bbsfit", "bbcc", "bbfr";
         Binary => "frac", "root", "stackrel", "overset", "underset", "color", "id", "class";
         // greek symbols
-        Symbol(Glyph) => "alpha", "beta", "chi", "delta", "Delta", "epsi", "epsilon",
-            "varepsilon", "eta", "gamma", "Gamma", "iota", "kappa", "lambda", "Lambda", "lamda",
-            "Lamda", "mu", "nu", "omega", "Omega", "phi", "varphi", "Phi", "pi", "Pi", "psi",
-            "Psi", "rho", "sigma", "Sigma", "tau", "theta", "vartheta", "Theta", "upsilon", "xi",
-            "Xi", "zeta";
+        Symbol(Glyph) => "alpha" => "α", "Alpha" => "Α", "beta" => "β", "Beta" => "Β",
+            "chi" => "χ", "Chi" => "Χ", "delta" => "δ", "Delta" => "Δ", "epsi" => "ε",
+            "Epsi" => "Ε", "epsilon" => "ε", "Epsilon" => "Ε", "varepsilon" => "ϵ", "eta" => "η",
+            "Eta" => "Η", "gamma" => "γ", "Gamma" => "Γ", "iota" => "ι", "Iota" => "Ι",
+            "kappa" => "κ", "Kappa" => "Κ", "varkappa" => "ϰ", "lambda" => "λ", "Lambda" => "Λ",
+            "lamda" => "λ", "Lamda" => "Λ", "mu" => "μ", "Mu" => "Μ", "nu" => "ν", "Nu" => "Ν",
+            "omega" => "ω", "Omega" => "Ω", "phi" => "φ", "varphi" => "ϕ", "Phi" => "Φ",
+            "pi" => "π", "Pi" => "Π", "varpi" => "ϖ", "psi" => "ψ", "Psi" => "Ψ", "rho" => "ρ",
+            "Rho" => "Ρ", "varrho" => "ϱ", "sigma" => "σ", "Sigma" => "Σ", "tau" => "τ",
+            "Tau" => "Τ", "theta" => "θ", "vartheta" => "ϑ", "Theta" => "Θ", "Vartheta" => "ϴ",
+            "upsilon" => "υ", "Upsilon" => "Υ", "xi" => "ξ", "Xi" => "Ξ", "zeta" => "ζ",
+            "Zeta" => "Ζ";
         // operations
         // `//` is division drawn with a slash, and `\\` the set difference drawn with a backslash
-        Symbol(Joining) => "*", "cdot", "**", "ast", "***", "star", "//", "\\\\", "backslash",
-            "setminus", "xx", "times", "|><", "ltimes", "><|", "rtimes", "|><|", "bowtie", "-:",
-            "div", "divide", "@", "circ", "o+", "oplus", "ox", "otimes", "o.", "odot", "^^",
-            "wedge", "vv", "vee", "nn", "cap", "uu", "cup", "o-", "ominus";
+        Symbol(Joining) => "*" => "⋅", "cdot" => "⋅", "**" => "∗", "ast" => "∗", "***" => "⋆",
+            "star" => "⋆", "//" => "/", "\\\\" => "\\", "backslash" => "\\", "setminus" => "\\",
+            "xx" => "×", "times" => "×", "|><" => "⋉", "ltimes" => "⋉", "><|" => "⋊",
+            "rtimes" => "⋊", "|><|" => "⋈", "bowtie" => "⋈", "-:" => "÷", "div" => "÷",
+            "divide" => "÷", "@" => "∘", "circ" => "∘", "o+" => "⊕", "oplus" => "⊕", "ox" => "⊗",
+            "otimes" => "⊗", "o." => "⊙", "odot" => "⊙", "^^" => "∧", "wedge" => "∧", "land" => "∧",
+            "vv" => "∨", "vee" => "∨", "lor" => "∨", "nn" => "∩", "cap" => "∩", "uu" => "∪",
+            "cup" => "∪", "o-" => "⊖", "ominus" => "⊖", "oslash" => "⊘";
         // asciimath lists the daggers among its operations, but each is a mark after an operand
-        Symbol(Glyph) => "dag", "dagger", "ddag", "ddagger";
+        Symbol(Glyph) => "dag" => "†", "dagger" => "†", "ddag" => "‡", "ddagger" => "‡";
         // big operations, which want the operand after them
-        Symbol(Leading) => "sum", "prod", "^^^", "bigwedge", "vvv", "bigvee", "nnn", "bigcap",
-            "uuu", "bigcup";
+        Symbol(Leading) => "sum" => "∑", "prod" => "∏", "^^^" => "⋀", "bigwedge" => "⋀",
+            "vvv" => "⋁", "bigvee" => "⋁", "nnn" => "⋂", "bigcap" => "⋂", "uuu" => "⋃",
+            "bigcup" => "⋃";
         // relations
-        Symbol(Joining) => "=", "!=", "ne", ":=", "<", "lt", "<=", "le", "lt=", "leq", ">", "gt",
-            "mlt", "ll", ">=", "ge", "gt=", "geq", "mgt", "gg", "-<", "prec", "-lt", ">-", "succ",
-            "-<=", "preceq", ">-=", "succeq", "in", "!in", "notin", "sub", "subset", "sup",
-            "supset", "sube", "subseteq", "supe", "supseteq", "!sub", "notsubset", "!sube",
-            "notsubseteq", "!sup", "notsupset", "!supe", "notsupseteq", "-=", "equiv", "!-=",
-            "notequiv", "~=", "cong", "~~", "approx", "~", "sim", "prop", "propto";
+        Symbol(Joining) => "=", "!=" => "≠", "ne" => "≠", ":=", "<", "lt" => "<", "<=" => "≤",
+            "le" => "≤", "lt=" => "≤", "leq" => "≤", ">", "gt" => ">", "mlt" => "≪", "ll" => "≪",
+            ">=" => "≥", "ge" => "≥", "gt=" => "≥", "geq" => "≥", "mgt" => "≫", "gg" => "≫",
+            "-<" => "≺", "prec" => "≺", "-lt" => "≺", ">-" => "≻", "succ" => "≻", "-<=" => "⪯",
+            "preceq" => "⪯", ">-=" => "⪰", "succeq" => "⪰", "in" => "∈", "!in" => "∉",
+            "notin" => "∉", "sub" => "⊂", "subset" => "⊂", "sup" => "⊃", "supset" => "⊃",
+            "sube" => "⊆", "subseteq" => "⊆", "supe" => "⊇", "supseteq" => "⊇", "!sub" => "⊄",
+            "nsub" => "⊄", "notsubset" => "⊄", "!sube" => "⊈", "nsubseteq" => "⊈",
+            "notsubseteq" => "⊈", "!sup" => "⊅", "nsup" => "⊅", "notsupset" => "⊅", "!supe" => "⊉",
+            "nsupseteq" => "⊉", "notsupseteq" => "⊉", "-=" => "≡", "equiv" => "≡", "!-=" => "≢",
+            "notequiv" => "≢", "~=" => "≅", "cong" => "≅", "~~" => "≈", "approx" => "≈", "~" => "∼",
+            "sim" => "∼", "prop" => "∝", "propto" => "∝";
         // logical
         Symbol(JoiningName) => "and", "or", "if";
         // negation and the quantifiers, plain glyphs that still want the operand after them
-        Symbol(Leading) => "not", "neg", "AA", "forall", "EE", "exists";
-        Symbol(Joining) => "=>", "implies", "<=>", "iff", "|--", "vdash", "|==", "models";
-        Symbol(Glyph) => "_|_", "bot", "TT", "top";
+        Symbol(Leading) => "not" => "¬", "neg" => "¬", "AA" => "∀", "forall" => "∀", "EE" => "∃",
+            "exists" => "∃", "!EE" => "∄", "notexists" => "∄";
+        Symbol(Joining) => "=>" => "⇒", "implies" => "⇒", "<=>" => "⇔", "iff" => "⇔",
+            "|--" => "⊢", "vdash" => "⊢", "|==" => "⊨", "models" => "⊨";
+        Symbol(Glyph) => "_|_" => "⊥", "bot" => "⊥", "TT" => "⊤", "top" => "⊤";
         // misc; asciimath lists these only among its miscellaneous symbols, so LaTeX settles them
-        Symbol(Joining) => ":|:", ":.", "therefore", ":'", "because", "diamond", "frown";
-        Symbol(Leading) => "int", "oint";
-        Symbol(Space) => "\\ ", "quad", "qquad", "enspace", "thinspace";
-        Symbol(Glyph) => "del", "partial", "grad", "nabla", "O/", "emptyset", "oo", "infty",
-            "aleph", "...", "ldots", "/_", "angle", "/_\\", "triangle", "'", "prime",
-            "cdots", "vdots", "ddots", "square", "CC", "NN", "QQ", "RR", "ZZ", "hbar";
+        Symbol(Joining) => ":|:" => "|", ":." => "∴", "therefore" => "∴", ":'" => "∵",
+            "because" => "∵", "diamond" => "⋄", "frown" => "⌢";
+        Symbol(Leading) => "int" => "∫", "oint" => "∮", "iint" => "∬", "iiint" => "∭",
+            "oiint" => "∯", "oiiint" => "∰";
+        Symbol(Space) => "\\ " => " ", "quad" => "\u{2003}", "qquad" => "\u{2003}\u{2003}",
+            "enspace" => "\u{2002}", "thinspace" => "\u{2009}";
+        Symbol(Glyph) => "del" => "∂", "partial" => "∂", "grad" => "∇", "nabla" => "∇",
+            "O/" => "∅", "emptyset" => "∅", "oo" => "∞", "infty" => "∞", "aleph" => "ℵ",
+            "..." => "…", "ldots" => "…", "/_" => "∠", "angle" => "∠", "/_\\" => "△",
+            "triangle" => "△", "'" => "′", "prime" => "′", "cdots" => "⋯", "vdots" => "⋮",
+            "ddots" => "⋱", "square" => "□", "CC" => "ℂ", "NN" => "ℕ", "QQ" => "ℚ", "RR" => "ℝ",
+            "ZZ" => "ℤ", "ell" => "ℓ", "hbar" => "ℏ";
         // not asciimath symbols, but each completes the operand before it, so a sign after joins
         Symbol(Glyph) => "!", "%";
         // underover
         Symbol(LeadingName) => "lim", "Lim", "dim", "lub", "glb", "min", "max";
         Symbol(JoiningName) => "mod";
         // arrows
-        Symbol(Joining) => "uarr", "uparrow", "darr", "downarrow", "rarr", "rightarrow", "->",
-            "to", ">->", "rightarrowtail", "->>", "twoheadrightarrow", ">->>",
-            "twoheadrightarrowtail", "|->", "mapsto", "larr", "leftarrow", "harr",
-            "leftrightarrow", "rArr", "Rightarrow", "lArr", "Leftarrow", "hArr", "Leftrightarrow",
-            "dArr", "Downarrow", "rightleftharpoons";
+        Symbol(Joining) => "uarr" => "↑", "uparrow" => "↑", "uArr" => "⇑", "Uparrow" => "⇑",
+            "darr" => "↓", "downarrow" => "↓", "rarr" => "→", "rightarrow" => "→", "->" => "→",
+            "to" => "→", ">->" => "↣", "rightarrowtail" => "↣", "->>" => "↠",
+            "twoheadrightarrow" => "↠", ">->>" => "⤖", "twoheadrightarrowtail" => "⤖", "|->" => "↦",
+            "mapsto" => "↦", "larr" => "←", "leftarrow" => "←", "<-" => "←", "harr" => "↔",
+            "leftrightarrow" => "↔", "<->" => "↔", "rArr" => "⇒", "Rightarrow" => "⇒", "==>" => "⇒",
+            "lArr" => "⇐", "Leftarrow" => "⇐", "<==" => "⇐", "hArr" => "⇔", "Leftrightarrow" => "⇔",
+            "<==>" => "⇔", "dArr" => "⇓", "Downarrow" => "⇓", "rightleftharpoons" => "⇌";
         // brackets; the floor and ceiling marks are brackets here, where asciimath makes them
         // plain symbols
-        OpenBracket => "(", "[", "{", "|:", "(:", "<<", "langle", "left(", "left[", "{:", "|__",
-            "lfloor", "|~", "lceiling";
-        CloseBracket => ")", "]", "}", ":|", ":)", ">>", "rangle", "right)", "right]", ":}", "__|",
-            "rfloor", "~|", "rceiling";
+        OpenBracket => "(", "[", "{", "|:" => "|", "(:" => "⟨", "<<" => "⟨", "langle" => "⟨",
+            "left(" => "(", "left[" => "[", "{:" => "", "|__" => "⌊", "lfloor" => "⌊",
+            "|~" => "⌈", "lceiling" => "⌈";
+        CloseBracket => ")", "]", "}", ":|" => "|", ":)" => "⟩", ">>" => "⟩", "rangle" => "⟩",
+            "right)" => ")", "right]" => "]", ":}" => "", "__|" => "⌋", "rfloor" => "⌋",
+            "~|" => "⌉", "rceiling" => "⌉";
         OpenCloseBracket => "|", "||";
         // defined names
         Symbol(Name) => "dx", "dy", "dz", "dt";
     )
 };
 
+/// Whether `form` is another spelling of its own token in the default token map
+///
+/// A form isn't when it is empty, whitespace, which is always [`Token::Space`], already a spelling
+/// in [`ASCIIMATH_TOKENS`], or the form of an earlier entry.
+fn is_new_spelling(index: usize, form: &str) -> bool {
+    !form.trim_start().is_empty()
+        && ASCIIMATH_TOKENS.iter().all(|entry| entry.spelling != form)
+        && ASCIIMATH_TOKENS[..index]
+            .iter()
+            .all(|entry| entry.unicode != Some(form))
+}
+
+/// Every spelling the default tokenizer accepts, with its token
+///
+/// These are the spellings in [`ASCIIMATH_TOKENS`] followed by each unicode form that isn't
+/// already one of them, so typed `⊂` is the same token as `subset`. The forms left out are the
+/// ones that are already the spelling of something else: `/` (from `//`) stays a fraction, `|`
+/// (from `|:`, `:|` and `:|:`) stays a bracket that can open or close, `<` and `>` (from `lt` and
+/// `gt`) and `(`, `[`, `)` and `]` (from `left(` and friends) are their own spellings already; and
+/// the empty forms of `{:` and `:}` and the spaces of `\ `, `quad`, `qquad`, `enspace` and
+/// `thinspace`, since typed whitespace is always [`Token::Space`].
+///
+/// # Example
+/// ```
+/// use asciimath_parser::prefix_map::HashPrefixMap;
+/// use asciimath_parser::{asciimath_spellings, Tokenizer};
+///
+/// let token_map = HashPrefixMap::from_iter(asciimath_spellings());
+/// let tokens = Tokenizer::with_tokens("a ⊂ b", &token_map, true);
+/// ```
+pub fn asciimath_spellings() -> impl Iterator<Item = (&'static str, Token)> + Clone {
+    let forms = ASCIIMATH_TOKENS
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            entry
+                .unicode
+                .filter(|form| is_new_spelling(index, form))
+                .map(|form| (form, entry.token))
+        });
+    ASCIIMATH_TOKENS
+        .iter()
+        .map(|entry| entry.entry())
+        .chain(forms)
+}
+
 pub type DefaultTokens = HashPrefixMap<&'static str, Token>;
 
 static DEFAULT_TOKENS: LazyLock<DefaultTokens> =
-    LazyLock::new(|| HashPrefixMap::from_iter(ASCIIMATH_TOKENS));
+    LazyLock::new(|| HashPrefixMap::from_iter(asciimath_spellings()));
 
 // TODO allow for negative sign preceeding numbers?
 fn strip_number(inp: &str) -> Option<(&str, &str)> {
@@ -296,9 +406,9 @@ impl<'a> Tokenizer<'a, 'static, DefaultTokens> {
     /// Ignoring performance differences, this achieves the same result as:
     /// ```
     /// use asciimath_parser::prefix_map::HashPrefixMap;
-    /// use asciimath_parser::{ASCIIMATH_TOKENS, Tokenizer, parse_tokens};
+    /// use asciimath_parser::{Tokenizer, asciimath_spellings};
     ///
-    /// Tokenizer::with_tokens("...", &HashPrefixMap::from_iter(ASCIIMATH_TOKENS), true);
+    /// Tokenizer::with_tokens("...", &HashPrefixMap::from_iter(asciimath_spellings()), true);
     /// ```
     #[must_use]
     pub fn new(inp: &'a str) -> Self {
@@ -431,7 +541,9 @@ impl<T> FusedIterator for Tokenizer<'_, '_, T> where T: PrefixMap<Token> {}
 #[cfg(test)]
 mod tests {
     use crate::prefix_map::HashPrefixMap;
-    use crate::{ASCIIMATH_TOKENS, SymbolClass, Token, Tokenizer};
+    use crate::{
+        ASCIIMATH_TOKENS, SymbolClass, Token, TokenSpelling, Tokenizer, asciimath_spellings,
+    };
 
     fn not_space(&(_, token): &(&str, Token)) -> bool {
         token != Token::Space
@@ -470,7 +582,7 @@ mod tests {
 
     #[test]
     fn unknown_non_letters_are_operators() {
-        let tokens: Vec<_> = Tokenizer::new("a+b?α").filter(not_space).collect();
+        let tokens: Vec<_> = Tokenizer::new("a+b?é").filter(not_space).collect();
         assert_eq!(
             *tokens,
             [
@@ -478,11 +590,11 @@ mod tests {
                 ("+", Token::Sign),
                 ("b", Token::Ident),
                 ("?", Token::Operator),
-                ("α", Token::Ident),
+                ("é", Token::Ident),
             ]
         );
 
-        let token_map = HashPrefixMap::from_iter(ASCIIMATH_TOKENS);
+        let token_map = HashPrefixMap::from_iter(asciimath_spellings());
         let runs: Vec<_> = Tokenizer::with_tokens("ab ?; c", &token_map, false)
             .filter(not_space)
             .collect();
@@ -536,7 +648,7 @@ mod tests {
 
     #[test]
     fn str_tokenizer() {
-        let token_map = HashPrefixMap::from_iter(ASCIIMATH_TOKENS);
+        let token_map = HashPrefixMap::from_iter(asciimath_spellings());
         let tokens: Vec<_> = Tokenizer::with_tokens(
             r#"frac (abs x) xy / 7^2 "text with spaces""#,
             &token_map,
@@ -564,7 +676,7 @@ mod tests {
 
     #[test]
     fn str_tokenizer_absorbs_stray_dot_and_unterminated_text() {
-        let token_map = HashPrefixMap::from_iter(ASCIIMATH_TOKENS);
+        let token_map = HashPrefixMap::from_iter(asciimath_spellings());
 
         let dotted: Vec<_> = Tokenizer::with_tokens("a.b + c", &token_map, false)
             .filter(not_space)
@@ -781,8 +893,123 @@ mod tests {
                 ("dArr", Token::Symbol(SymbolClass::Joining)),
             ]
         );
-        assert!(ASCIIMATH_TOKENS.iter().any(|&(name, _)| name == "approx"));
-        assert!(!ASCIIMATH_TOKENS.iter().any(|&(name, _)| name == "aprox"));
+        assert!(
+            ASCIIMATH_TOKENS
+                .iter()
+                .any(|entry| entry.spelling == "approx")
+        );
+        assert!(
+            !ASCIIMATH_TOKENS
+                .iter()
+                .any(|entry| entry.spelling == "aprox")
+        );
+    }
+
+    #[test]
+    fn every_unicode_form_is_a_spelling_of_its_token() {
+        // forms that are already another spelling, or whitespace, which is always space
+        let collisions: [(&str, Token); 9] = [
+            ("/", Token::Frac),
+            ("|", Token::OpenCloseBracket),
+            ("<", Token::Symbol(SymbolClass::Joining)),
+            (">", Token::Symbol(SymbolClass::Joining)),
+            ("(", Token::OpenBracket),
+            ("[", Token::OpenBracket),
+            (")", Token::CloseBracket),
+            ("]", Token::CloseBracket),
+            (" ", Token::Space),
+        ];
+        for TokenSpelling {
+            spelling,
+            token,
+            unicode,
+        } in ASCIIMATH_TOKENS
+        {
+            let Some(form) = unicode else { continue };
+            assert_ne!(form, spelling, "{spelling} carries itself as its form");
+            let tokens: Vec<_> = Tokenizer::new(form).collect();
+            if form.is_empty() {
+                assert!(tokens.is_empty(), "{spelling}");
+            } else if form.trim().is_empty() {
+                assert_eq!(*tokens, [(form, Token::Space)], "{spelling}");
+            } else if let Some(&(_, other)) = collisions.iter().find(|&&(raw, _)| raw == form) {
+                assert_eq!(*tokens, [(form, other)], "{spelling}");
+            } else {
+                assert_eq!(*tokens, [(form, token)], "{spelling}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_spellings_are_the_table_then_its_new_forms() {
+        let spellings: Vec<_> = asciimath_spellings().collect();
+        let (table, forms) = spellings.split_at(ASCIIMATH_TOKENS.len());
+        assert_eq!(*table, ASCIIMATH_TOKENS.map(TokenSpelling::entry));
+        for (index, &(form, _)) in forms.iter().enumerate() {
+            assert!(
+                !table.iter().any(|&(spelling, _)| spelling == form),
+                "{form}"
+            );
+            assert!(
+                !forms[..index].iter().any(|&(other, _)| other == form),
+                "{form}"
+            );
+        }
+        assert!(forms.contains(&("⊂", Token::Symbol(SymbolClass::Joining))));
+        assert!(!forms.iter().any(|&(form, _)| form == "/"));
+    }
+
+    #[test]
+    fn spellings_beyond_the_asciimath_reference() {
+        let tokens: Vec<_> = Tokenizer::new(
+            "Alpha varkappa it land lor oslash nsub nsupseteq !EE notexists iint oiiint ell uArr \
+             <- <-> ==> <== <==>",
+        )
+        .filter(not_space)
+        .collect();
+        let glyph = Token::Symbol(SymbolClass::Glyph);
+        let joining = Token::Symbol(SymbolClass::Joining);
+        let leading = Token::Symbol(SymbolClass::Leading);
+        assert_eq!(
+            *tokens,
+            [
+                ("Alpha", glyph),
+                ("varkappa", glyph),
+                ("it", Token::Unary),
+                ("land", joining),
+                ("lor", joining),
+                ("oslash", joining),
+                ("nsub", joining),
+                ("nsupseteq", joining),
+                ("!EE", leading),
+                ("notexists", leading),
+                ("iint", leading),
+                ("oiiint", leading),
+                ("ell", glyph),
+                ("uArr", joining),
+                ("<-", joining),
+                ("<->", joining),
+                ("==>", joining),
+                ("<==", joining),
+                ("<==>", joining),
+            ]
+        );
+    }
+
+    #[test]
+    fn unicode_signs() {
+        let tokens: Vec<_> = Tokenizer::new("± ∓ − ⋅ ⟨ ⌋").filter(not_space).collect();
+        assert_eq!(
+            *tokens,
+            [
+                ("±", Token::Sign),
+                ("∓", Token::Sign),
+                ("−", Token::Sign),
+                ("⋅", Token::Symbol(SymbolClass::Joining)),
+                ("⟨", Token::OpenBracket),
+                ("⌋", Token::CloseBracket),
+            ]
+        );
     }
 
     #[test]
@@ -844,7 +1071,7 @@ mod tests {
             ]
         );
 
-        let token_map = HashPrefixMap::from_iter(ASCIIMATH_TOKENS);
+        let token_map = HashPrefixMap::from_iter(asciimath_spellings());
         let words: Vec<_> = Tokenizer::with_tokens("text(a b)", &token_map, false)
             .filter(not_space)
             .collect();

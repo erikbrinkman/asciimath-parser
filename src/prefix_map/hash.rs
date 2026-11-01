@@ -13,9 +13,9 @@ use std::hash::{BuildHasher, Hash};
 /// # Example
 /// ```
 /// use asciimath_parser::prefix_map::HashPrefixMap;
-/// use asciimath_parser::{ASCIIMATH_TOKENS};
+/// use asciimath_parser::asciimath_spellings;
 ///
-/// let token_map = HashPrefixMap::from_iter(ASCIIMATH_TOKENS);
+/// let token_map = HashPrefixMap::from_iter(asciimath_spellings());
 /// ```
 #[derive(Debug, Clone)]
 pub struct HashPrefixMap<K, V, S = FxBuildHasher>(Box<[HashMap<K, V, S>]>);

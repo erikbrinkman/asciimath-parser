@@ -22,7 +22,7 @@ fn random_input(rng: &mut impl Rng, len: usize) -> String {
         match rng.sample(&choice) {
             0 => input.push_str(rng.sample(opens)),
             1 => input.push_str(rng.sample(structure)),
-            2 => input.push_str(rng.sample(token).0),
+            2 => input.push_str(rng.sample(token).spelling),
             3 => input.push(rng.random_range('a'..='z')),
             4 => input.push(' '),
             _ => unreachable!(),
