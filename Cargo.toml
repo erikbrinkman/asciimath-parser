@@ -13,6 +13,7 @@ include = ["/src", "/LICENSE", "/README.md"]
 
 [dependencies]
 rustc-hash = "2"
+unicode-segmentation = "1"
 
 [dev-dependencies]
 rand = "0.10"

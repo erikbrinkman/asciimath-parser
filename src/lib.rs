@@ -65,7 +65,7 @@
 //! without the two reading as one name; whether it joins the operands on either side of it, like
 //! `=` or `xx`; whether it wants the operand after it, like `sum` or `lim`; whether it is space,
 //! like `quad`; or whether it is the separator. An [`Ident`][tree::Simple::Ident] is then a bare
-//! variable, a single character under the default tokenizer, and never a name. A big operator keeps
+//! variable, a single grapheme under the default tokenizer, and never a name. A big operator keeps
 //! its scripts and leaves the operand after it as the next part of the expression, as it always
 //! has, while `sin` and the other [functions][Token::Function] still take theirs.
 //!
