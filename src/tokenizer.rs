@@ -167,8 +167,9 @@ pub const ASCIIMATH_TOKENS: [(&str, Token); 390] = {
         Symbol(Joining) => "*", "cdot", "**", "ast", "***", "star", "//", "\\\\", "backslash",
             "setminus", "xx", "times", "|><", "ltimes", "><|", "rtimes", "|><|", "bowtie", "-:",
             "div", "divide", "@", "circ", "o+", "oplus", "ox", "otimes", "o.", "odot", "^^",
-            "wedge", "vv", "vee", "nn", "cap", "uu", "cup", "o-", "ominus", "dag", "dagger",
-            "ddag", "ddagger";
+            "wedge", "vv", "vee", "nn", "cap", "uu", "cup", "o-", "ominus";
+        // asciimath lists the daggers among its operations, but each is a mark after an operand
+        Symbol(Glyph) => "dag", "dagger", "ddag", "ddagger";
         // big operations, which want the operand after them
         Symbol(Leading) => "sum", "prod", "^^^", "bigwedge", "vvv", "bigvee", "nnn", "bigcap",
             "uuu", "bigcup";
@@ -638,6 +639,22 @@ mod tests {
                 ("\\\\", Token::Symbol(SymbolClass::Joining)),
                 ("backslash", Token::Symbol(SymbolClass::Joining)),
                 ("setminus", Token::Symbol(SymbolClass::Joining)),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_daggers_are_plain_symbols() {
+        let tokens: Vec<_> = Tokenizer::new("dag dagger ddag ddagger")
+            .filter(not_space)
+            .collect();
+        assert_eq!(
+            *tokens,
+            [
+                ("dag", Token::Symbol(SymbolClass::Glyph)),
+                ("dagger", Token::Symbol(SymbolClass::Glyph)),
+                ("ddag", Token::Symbol(SymbolClass::Glyph)),
+                ("ddagger", Token::Symbol(SymbolClass::Glyph)),
             ]
         );
     }
